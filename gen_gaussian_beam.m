@@ -1,13 +1,15 @@
-function [k,P] = gen_gaussian_beam(R,O,t0x,t0y,lambda,na,np)
+function [k,P] = gen_gaussian_beam(R,O,t0x,t0y,lambda,N)
 
 w0x = lambda/(pi*t0x);
 w0y = lambda/(pi*t0y);
 
-a_ = linspace(0.,2*pi,na);
-p_ = linspace(0.,1.,np);
+nr = floor(sqrt(N/4));
+
+a_ = linspace(pi/4,2*pi + pi/4,nr);
+p_ = linspace(0.,1.,nr);
 
 [A,B] = meshgrid(a_,p_);
-a = reshape(A,1,[]); b = a + pi/4;
+a = reshape(A,1,[]); b = a + pi;
 p = reshape(B,1,[]);
 
 x0 = 0; y0 = 0; l0 = 0; m0 = 0;
@@ -40,8 +42,13 @@ dir_cossines = @(l,m) [
     1./sqrt(l.^2 + m.^2 + 1);
 ];
 
-P = R*position([x0,x1,x2,x3,x4],[y0,y1,y2,y3,y4]) + O;
-k = R*dir_cossines([l0,l1,l2,l3,l4],[m0,m1,m2,m3,m4]);
+x = [x0,x1,x2,x3,x4];
+y = [y0,y1,y2,y3,y4];
+l = [l0,l1,l2,l3,l4];
+m = [m0,m1,m2,m3,m4];
+
+P = R*position(x,y) + O;
+k = R*dir_cossines(l,m)
 
 end
 

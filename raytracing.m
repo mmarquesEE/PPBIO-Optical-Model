@@ -51,13 +51,13 @@ fy1 = 5.1*1e-3;
 Rl2 = eye(3);
 Ol2 = [0;-11.302;-3]*1e-3;
 fx2 = Inf;
-fy2 = 12*1e-3;
+fy2 = 12.49*1e-3;
 
 % rays
 % [k0,P0] = gen_rays(eye(3),Ol - [0;0;5],1.8,1.8,100,0);
-tx0 = 16*pi/180;
-ty0 = 8*pi/180;
-[k0,P0] = gen_gaussian_beam(eye(3), Ol1 - [0;0;5e-3],tx0,ty0,0.8e-6,1000,1000);
+tx0 = 20*pi/180;
+ty0 = 20*pi/180;
+[k0,P0] = gen_gaussian_beam(eye(3), Ol1 - [0;0;5e-3],tx0,ty0,0.8e-6,4);
 
 % trace
 [k1,P1] = lens(k0,P0,Rl1,Ol1,fx1,fy1);
@@ -72,11 +72,12 @@ ty0 = 8*pi/180;
 
 
 figure
-plot(P6(1,:),P6(2,:),'r.'); axis equal
+plot(P6(1,:),P6(2,:),'r.');
+% axis equal
 
 %% Plot PPBIO
 rays = [];
-for i = 1:floor(length(k0)/100):length(k0)
+for i = 1:1:length(k0)
     rays = [rays, P0(:,i), P1(:,i), P2(:,i), P3(:,i), P4(:,i), P5(:,i), P6(:,i), P7(:,i), P8(:,i), P9(:,i) ,NaN(3,1)];
 end
 
@@ -97,4 +98,7 @@ planes = [cpb,NaN(3,1),cps1,NaN(3,1),cpt,NaN(3,1),cps2,NaN(3,1),cpl1,NaN(3,1),cp
 
 plot3(planes(1,:),planes(2,:),planes(3,:))
 
+figure
+plot(rays(2,:),rays(3,:),'r'); hold on;
+plot(planes(2,:),planes(3,:)); axis equal
 
