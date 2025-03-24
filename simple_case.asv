@@ -21,4 +21,4 @@ A = M1(1,1); B = M1(1,2); C = M1(2,1); D = M1(2,2);
 q1 = z + 1j* lambda/(pi*theta_0x^2);
 
 q2 = simplify((A*q1 + B)/(C*q1 + D));
-q2 = simplify(subs(q2,{d1,d3 + d4/n_p,d2},{f_c,f_f,f_f}))
+q2 = simplify(subs(q2,{d1,d3 + d4*n_p,d2},{f_c,f_f,f_f}))
