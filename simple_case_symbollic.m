@@ -20,7 +20,9 @@ R = z*(1 + (z0r/z)^2);
 zetaa = atan(z/z0r);
 
 varphi = simplify(k*z - zetaa + (k*x^2)/(2*R));
-grad_varphi = simplify([(k*x)/R; k - (k*x^2)/(2*R^2)*(1 - (z0r/z)^2) - (W0r/W)^2]);
+grad_varphi = simplify([(k*x)/R; k - (k*x^2)/(2*R^2)*(1 - (z0r/z)^2) - (W0r/W)^2])
+
+latex(grad_varphi)
 u = simplify((W0r/W)*exp(-(x/W)^2)*exp(-1j*varphi));
 
 Varphi = simplify(subs(varphi, [x, z], [s*cos(theta), -s*sin(theta)]))
