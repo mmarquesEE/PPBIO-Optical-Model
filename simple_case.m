@@ -1,13 +1,14 @@
+close all
 clear all
 clc
 
-% Inclua o pacote de simbolos
-syms lambda theta0 z f_c f_f n_p
+%% Parâmetros do sistema
 
-W0 = lambda/(pi*theta0);
-z0 = lambda/(pi*theta0^2);
 
-z0c = (f_c^2/(2*z0^2))*z0;
-z0f = z0c/(1 + (z0c/f_f)^2);
-z0r = n_p*z0f;
+
+lambda = 670e-9;
+theta0x = 5*0.5*pi/180;
+theta0y = 30*0.5*pi/180;
+
+fc = 
 
