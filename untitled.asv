@@ -27,7 +27,7 @@ z0 = lambda1/(pi*theta0^2);
 
 %%
 
-s = linspace(-100e-6, 100e-6, 2^16);
+s = linspace(-30e-6, 30e-6, 2^12);
 
 theta = 68/180*pi;
 
@@ -41,8 +41,8 @@ U = gb_complex_amplitude(x, z, k, w0, z0);
 % ignore evanescent fields
 alpha = fs*lambda1;
 
-A  = A(abs(alpha) <= 1);
-fs = fs(abs(alpha) <= 1);
+A  = A(abs(alpha) < 1);
+fs = fs(abs(alpha) < 1);
 ang = real(asin(fs*lambda1));
 
 [rp, tp, ~] = fresnel_coefficients_p(ang, n1, n2, n3, 50e-9, lambda0);
@@ -53,17 +53,15 @@ A1i = Ar;
 % angular spectrum propagation transfer function.
 H_as = @(fx, z) exp(1j*2*pi*z*sqrt((1/lambda1^2) - fx.^2));
 
-z = linspace(-20e-6,0, length(fs))';
+z = linspace(-10e-6,0, length(fs))';
 
-A1 = H_as(fs, z).*A + H_as(fs, -z).*Ar;
+A1 = H_as(fs, z)*A + H_as(fs, -z);
 
 [U1, sp] = i_angular_spectrum(A1, fs);
 
-figure(Position=[150,150,1500,300])
-image(-sp, -z, abs(U1), 'CDataMapping', 'scaled')
-title('$|E_{xz}|^2$ ($\lambda=0.67\mu$m, $\theta = 68$deg)', Interpreter='latex', FontSize=16)
-xlabel('x($\mu$m)', Interpreter='latex', FontSize=16)
-ylabel('z($\mu$m)', Interpreter='latex', FontSize=16);
+figure
+image(sp, z, abs(U1), 'CDataMapping', 'scaled')
+axis equal
 colorbar
 
 %%
