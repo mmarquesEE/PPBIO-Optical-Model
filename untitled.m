@@ -27,7 +27,7 @@ z0 = lambda1/(pi*theta0^2);
 
 %%
 
-s = linspace(-100e-6, 100e-6, 2^16);
+s = linspace(-.5e-3, .5e-3, 2^20);
 
 theta = 68/180*pi;
 
@@ -48,12 +48,10 @@ ang = real(asin(fs*lambda1));
 [rp, tp, ~] = fresnel_coefficients_p(ang, n1, n2, n3, 50e-9, lambda0);
 Ar = A.*rp;
 
-A1i = Ar;
-
 % angular spectrum propagation transfer function.
 H_as = @(fx, z) exp(1j*2*pi*z*sqrt((1/lambda1^2) - fx.^2));
 
-z = linspace(-20e-6,0, length(fs))';
+z = linspace(-100e-6,0, length(fs))';
 
 A1 = H_as(fs, z).*A + H_as(fs, -z).*Ar;
 
@@ -61,9 +59,11 @@ A1 = H_as(fs, z).*A + H_as(fs, -z).*Ar;
 
 figure(Position=[150,150,1500,300])
 image(-sp, -z, abs(U1), 'CDataMapping', 'scaled')
-title('$|E_{xz}|^2$ ($\lambda=0.67\mu$m, $\theta = 68$deg)', Interpreter='latex', FontSize=16)
+title('$|E_{xz}|$ ($\lambda=0.67\mu$m, $\theta = 68$deg)', Interpreter='latex', FontSize=16)
+xlim(10e-5*[-1, 1])
 xlabel('x($\mu$m)', Interpreter='latex', FontSize=16)
 ylabel('z($\mu$m)', Interpreter='latex', FontSize=16);
+axis equal
 colorbar
 
 %%
@@ -127,7 +127,7 @@ function [U, x] = i_angular_spectrum(A, fx)
 dx = 1/mean(diff(fx));
 L = 2^nextpow2(length(fx));
 
-U = ifft(A, L, 2);
+U = ifft(A*length(fx), L, 2);
 x = (dx/L)*(-L/2:L/2-1);
 
 end
