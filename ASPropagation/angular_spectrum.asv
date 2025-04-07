@@ -1,0 +1,9 @@
+function [A, fx] = angular_spectrum(U, x)
+
+Fs = 1/mean(diff(x));
+L = 2^nextpow2(length(x));
+
+A  = fft(U, L, 2)/L;
+fx = ifftshift((Fs/L)*((-L/2):(L/2-1)));
+
+end

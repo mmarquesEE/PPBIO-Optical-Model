@@ -39,10 +39,11 @@ n3 = spline(lambda_water, n_water, lambda0_um) + ...
 % thickness of gold layer
 d_tf = 50e-9;
 
+lambda1 = lambda0/n1;
+
 %% Laser (defined at the substrate)
 
 theta0 = 5/180*pi;
-lambda1 = lambda0/n1;
 
 k = 2*pi/lambda1;
 
@@ -51,7 +52,7 @@ z0 = lambda1/(pi*theta0^2);
 
 %% Angular Spectrum Propagation
 
-s = linspace(-.5e-3, .5e-3, 2^20);
+s = linspace(-.5e-3, .5e-3, 2^13);
 dz = d_tf/10;
 
 %%
@@ -60,7 +61,7 @@ theta = 68/180*pi;
 x = s*cos(theta);
 z = -s*sin(theta);
 
-U = 100*gb_complex_amplitude(x, z, k, w0, z0);
+U = gb_complex_amplitude(x, z, k, w0, z0);
 
 [Ai1, fs] = angular_spectrum(U, s);
 
@@ -69,39 +70,46 @@ Ai1  = Ai1(abs(fs*lambda1) <= 1);
 fs = fs(abs(fs*lambda1) <= 1);
 ang = real(asin(fs*lambda1));
 
-%%
-% angular spectrum propagation transfer function.
-H_as = @(fx, z) exp(1j*2*pi*z*sqrt((1/lambda1^2) - fx.^2));
+%% Using propagation transfer function
+% % angular spectrum propagation transfer function.
+% H_as = @(fx, z) exp(1j*2*pi*z*sqrt((1/lambda1^2) - fx.^2));
+% 
+% % Angular Spectra at 1 - 2 interface
+% [rp1, tp1, ~] = fresnel_coefficients_p(ang, n1, n2, n3, d_tf, lambda0);
+% Ar1 = Ai1.*rp1;
+% At1 = Ai1.*tp1;
+% 
+% z1 = ((-40e-6):dz:0)';
+% A1 = H_as(fs, z1).*Ai1 + H_as(fs, -z1).*Ar1;
+% 
+% % Angular Spectra at 2 - 3 interface
+% [rp2, tp2, ~] = fresnel_coefficients_p(ang, n2, n2, n3, d_tf, lambda0);
+% Ai2 = H_as(fs, d_tf).*At1;
+% Ar2 = Ai2.*rp2;
+% At2 = Ai2.*tp2;
+% 
+% z2 = (0:dz:d_tf)';
+% A2 = H_as(fs, -z2).*Ai2 + H_as(fs, z2).*Ar2;
+% 
+% % Angular spectra at the analyte
+% z3 = (d_tf:dz:(d_tf + 10e-6))';
+% A3 = H_as(fs, z3 - d_tf).*At2;
+% 
+% At = [A1;A2;A3];
+% zt = [z1;z2;z3];
+% 
+% [Ut, sp] = i_angular_spectrum(At, fs);
 
-% Angular Spectra at 1 - 2 interface
-[rp1, tp1, ~] = fresnel_coefficients_p(ang, n1, n2, n3, d_tf, lambda0);
-Ar1 = Ai1.*rp1;
-At1 = Ai1.*tp1;
+%% Using R-TMM
+H_as = @(fx, z, lambda) exp(1j*2*pi*z*sqrt((1/lambda^2) - fx.^2));
 
-z1 = ((-40e-6):dz:0)';
-A1 = H_as(fs, z1).*Ai1 + H_as(fs, -z1).*Ar1;
-
-% Angular Spectra at 2 - 3 interface
-[rp2, tp2, ~] = fresnel_coefficients_p(ang, n2, n2, n3, d_tf, lambda0);
-Ai2 = H_as(fs, d_tf).*At1;
-Ar2 = Ai2.*rp2;
-At2 = Ai2.*tp2;
-
-z2 = (0:dz:d_tf)';
-A2 = H_as(fs, -z2).*Ai2 + H_as(fs, z2).*Ar2;
-
-% Angular spectra at the analyte
-z3 = (d_tf:dz:(d_tf + 10e-6))';
-A3 = H_as(fs, z3 - d_tf).*At2;
-
-At = [A1;A2;A3];
-zt = [z1;z2;z3];
+zt = ((-40e-6):dz:10e-6)';
+At = tmm_3p_TM(Ai1, fs, zt, [n1;n2;n3], d_tf, lambda0);
 
 [Ut, sp] = i_angular_spectrum(At, fs);
 
+%% Plot
 execution_time = cputime - t0
-
-[m, n] = size(Ut);
 
 figure(Position=[150,150,1500,300])
 hold on
@@ -119,70 +127,4 @@ axis equal
 xlim(100*[-1, 1])
 colorbar
 
-%% Functions
-
-function U = gb_complex_amplitude(x, z, k, w0, z0)
-
-w = w0*sqrt(1 + (z/z0).^2);
-
-if z ~= 0
-    R = z.*(1 + (z0./z).^2);
-    eta = atan(z/z0);
-    
-    phi = k*z + k*x.^2./(2*R) - eta;
-else
-    phi = 0;
-end
-
-U = w0./w.*exp(-x.^2./w.^2).*exp(-1j*phi);
-
-end
-
-function [rp, tp, ap] = fresnel_coefficients_p(theta_i, n1, n2, n3, dk, lambda0)
-
-qk = @(n1, nk) sqrt(nk^2 - n1^2*sin(theta_i).^2)/nk^2;
-
-q1 = qk(n1, n1);
-
-q2 = qk(n1, n2);
-q3 = qk(n1, n3);
-
-beta_2 = (2*pi*dk/lambda0)*sqrt(n2^2 - n1^2*sin(theta_i).^2);
-
-m11 = cos(beta_2);
-m12 = -1j*sin(beta_2)./q2;
-m21 = -1j*q2.*sin(beta_2);
-m22 = cos(beta_2);
-
-a = (m11 + m12.*q3);
-b = (m21 + m22.*q3);
-
-c = a.*q1 + b;
-d = a.*q1 - b;
-
-rp = d./c;
-tp = 2*q1./c;
-ap = 4*q1.*real(a.*conj(b) - q3)./(c.*conj(c));
-
-end
-
-function [A, fx] = angular_spectrum(U, x)
-
-Fs = 1/mean(diff(x));
-L = 2^nextpow2(length(x));
-
-A  = fft(U, L, 2)/L;
-fx = (Fs/L)*[0,(1:L/2),-(1:L/2)];
-
-end
-
-function [U, x] = i_angular_spectrum(A, fx)
-
-dx = 1/mean(diff(fx));
-L = 2^nextpow2(length(fx));
-
-U = ifft(A*length(fx), L, 2);
-x = (dx/L)*(-L/2:L/2-1);
-
-end
 

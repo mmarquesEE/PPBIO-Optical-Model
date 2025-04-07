@@ -69,119 +69,56 @@ Ai1  = Ai1(abs(fs*lambda1) <= 1);
 fs = fs(abs(fs*lambda1) <= 1);
 ang = real(asin(fs*lambda1));
 
-%%
-% angular spectrum propagation transfer function.
-H_as = @(fx, z) exp(1j*2*pi*z*sqrt((1/lambda1^2) - fx.^2));
+%% Using propagation transfer function
+% % angular spectrum propagation transfer function.
+% H_as = @(fx, z) exp(1j*2*pi*z*sqrt((1/lambda1^2) - fx.^2));
+% 
+% % Angular Spectra at 1 - 2 interface
+% [rp1, tp1, ~] = fresnel_coefficients_p(ang, n1, n2, n3, d_tf, lambda0);
+% Ar1 = Ai1.*rp1;
+% At1 = Ai1.*tp1;
+% 
+% z1 = ((-40e-6):dz:0)';
+% A1 = H_as(fs, z1).*Ai1 + H_as(fs, -z1).*Ar1;
+% 
+% % Angular Spectra at 2 - 3 interface
+% [rp2, tp2, ~] = fresnel_coefficients_p(ang, n2, n2, n3, d_tf, lambda0);
+% Ai2 = H_as(fs, d_tf).*At1;
+% Ar2 = Ai2.*rp2;
+% At2 = Ai2.*tp2;
+% 
+% z2 = (0:dz:d_tf)';
+% A2 = H_as(fs, -z2).*Ai2 + H_as(fs, z2).*Ar2;
+% 
+% % Angular spectra at the analyte
+% z3 = (d_tf:dz:(d_tf + 10e-6))';
+% A3 = H_as(fs, z3 - d_tf).*At2;
+% 
+% At = [A1;A2;A3];
+% zt = [z1;z2;z3];
+% 
+% [Ut, sp] = i_angular_spectrum(At, fs);
 
-% Angular Spectra at 1 - 2 interface
-[rp1, tp1, ~] = fresnel_coefficients_p(ang, n1, n2, n3, d_tf, lambda0);
-Ar1 = Ai1.*rp1;
-At1 = Ai1.*tp1;
-
-z1 = ((-40e-6):dz:0)';
-A1 = H_as(fs, z1).*Ai1 + H_as(fs, -z1).*Ar1;
-
-% Angular Spectra at 2 - 3 interface
-[rp2, tp2, ~] = fresnel_coefficients_p(ang, n2, n2, n3, d_tf, lambda0);
-Ai2 = H_as(fs, d_tf).*At1;
-Ar2 = Ai2.*rp2;
-At2 = Ai2.*tp2;
-
-z2 = (0:dz:d_tf)';
-A2 = H_as(fs, -z2).*Ai2 + H_as(fs, z2).*Ar2;
-
-% Angular spectra at the analyte
-z3 = (d_tf:dz:(d_tf + 10e-6))';
-A3 = H_as(fs, z3 - d_tf).*At2;
-
-At = [A1;A2;A3];
-zt = [z1;z2;z3];
-
-[Ut, sp] = i_angular_spectrum(At, fs);
+%% Using R-TMM
+zt = ((-40e-6):dz:)
+At = rtmm_tm_efield(Ai1, ang, z, [n1, n2, n3])
 
 execution_time = cputime - t0
 
-[m, n] = size(Ut);
-
 figure(Position=[150,150,1500,300])
-imagesc(-1e6*sp, -1e6*zt, abs(Ut))
 hold on
-line([min(sp) max(sp)], [, 'Color', 'red', 'LineStyle', '-');
-% line([0, n-1], find(zt==d_tf, 1)*[1,1], 'r');
+imagesc(-1e6*sp, 1e6*zt, abs(Ut))
+plot(1e6*[min(sp),max(sp)], [0,0], 'r', 1e6*[min(sp),max(sp)], 1e6*d_tf*[1,1], 'r');
+hold off
+
 title(['$|E_{xz}|$ ($\lambda=',num2str(lambda0_um,2),...
     '\mu$m, $\theta = ',num2str(theta/pi*180,2),'$deg, ',...
     '$\theta_{||}=',num2str(theta0/pi*180),'$deg)'],...
     Interpreter='latex', FontSize=16)
-xlim(30*[-1, 1])
 xlabel('x($\mu$m)', Interpreter='latex', FontSize=16)
 ylabel('z($\mu$m)', Interpreter='latex', FontSize=16);
 axis equal
+xlim(100*[-1, 1])
 colorbar
 
-%% Functions
-
-function U = gb_complex_amplitude(x, z, k, w0, z0)
-
-w = w0*sqrt(1 + (z/z0).^2);
-
-if z ~= 0
-    R = z.*(1 + (z0./z).^2);
-    eta = atan(z/z0);
-    
-    phi = k*z + k*x.^2./(2*R) - eta;
-else
-    phi = 0;
-end
-
-U = w0./w.*exp(-x.^2./w.^2).*exp(-1j*phi);
-
-end
-
-function [rp, tp, ap] = fresnel_coefficients_p(theta_i, n1, n2, n3, dk, lambda0)
-
-qk = @(n1, nk) sqrt(nk^2 - n1^2*sin(theta_i).^2)/nk^2;
-
-q1 = qk(n1, n1);
-
-q2 = qk(n1, n2);
-q3 = qk(n1, n3);
-
-beta_2 = (2*pi*dk/lambda0)*sqrt(n2^2 - n1^2*sin(theta_i).^2);
-
-m11 = cos(beta_2);
-m12 = -1j*sin(beta_2)./q2;
-m21 = -1j*q2.*sin(beta_2);
-m22 = cos(beta_2);
-
-a = (m11 + m12.*q3);
-b = (m21 + m22.*q3);
-
-c = a.*q1 + b;
-d = a.*q1 - b;
-
-rp = d./c;
-tp = 2*q1./c;
-ap = 4*q1.*real(a.*conj(b) - q3)./(c.*conj(c));
-
-end
-
-function [A, fx] = angular_spectrum(U, x)
-
-Fs = 1/mean(diff(x));
-L = 2^nextpow2(length(x));
-
-A  = fft(U, L, 2)/L;
-fx = (Fs/L)*[0,(1:L/2),-(1:L/2)];
-
-end
-
-function [U, x] = i_angular_spectrum(A, fx)
-
-dx = 1/mean(diff(fx));
-L = 2^nextpow2(length(fx));
-
-U = ifft(A*length(fx), L, 2);
-x = (dx/L)*(-L/2:L/2-1);
-
-end
 
