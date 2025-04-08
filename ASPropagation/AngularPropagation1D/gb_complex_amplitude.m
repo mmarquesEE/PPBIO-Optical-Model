@@ -1,4 +1,4 @@
-function U = gb_complex_amplitude(x, z, k, w0, z0)
+function U = gb_complex_amplitude(P, x, z, k, w0, z0)
 
 w = w0*sqrt(1 + (z/z0).^2);
 
@@ -11,6 +11,6 @@ else
     phi = 0;
 end
 
-U = w0./w.*exp(-x.^2./w.^2).*exp(-1j*phi);
+U = sqrt(2*P/pi)./w.*exp(-x.^2./w.^2).*exp(-1j*phi);
 
 end
