@@ -39,10 +39,11 @@ n3 = spline(lambda_water, n_water, lambda0_um) + ...
 % thickness of gold layer
 d_tf = 50e-9;
 
+lambda1 = lambda0/n1;
+
 %% Laser (defined at the substrate)
 
 theta0 = 5/180*pi;
-lambda1 = lambda0/n1;
 
 k = 2*pi/lambda1;
 
@@ -51,58 +52,30 @@ z0 = lambda1/(pi*theta0^2);
 
 %% Angular Spectrum Propagation
 
-s = linspace(-.5e-3, .5e-3, 2^20);
-dz = d_tf/10;
+d_alpha = 0.02/180*pi;
+ds = lambda0/d_alpha;
+
+dz = d_tf/20;
+
+s = ds*linspace(-.5,.5,2^14);
 
 %%
-theta = 68/180*pi;
+theta = 68.8/180*pi;
 
 x = s*cos(theta);
 z = -s*sin(theta);
 
-U = 100*gb_complex_amplitude(x, z, k, w0, z0);
+U = gb_complex_amplitude(0.3, x, z, k, w0, z0);
 
 [Ai1, fs] = angular_spectrum(U, s);
 
-% ignore evanescent fields
-Ai1  = Ai1(abs(fs*lambda1) <= 1);
-fs = fs(abs(fs*lambda1) <= 1);
-ang = real(asin(fs*lambda1));
-
-%% Using propagation transfer function
-% % angular spectrum propagation transfer function.
-% H_as = @(fx, z) exp(1j*2*pi*z*sqrt((1/lambda1^2) - fx.^2));
-% 
-% % Angular Spectra at 1 - 2 interface
-% [rp1, tp1, ~] = fresnel_coefficients_p(ang, n1, n2, n3, d_tf, lambda0);
-% Ar1 = Ai1.*rp1;
-% At1 = Ai1.*tp1;
-% 
-% z1 = ((-40e-6):dz:0)';
-% A1 = H_as(fs, z1).*Ai1 + H_as(fs, -z1).*Ar1;
-% 
-% % Angular Spectra at 2 - 3 interface
-% [rp2, tp2, ~] = fresnel_coefficients_p(ang, n2, n2, n3, d_tf, lambda0);
-% Ai2 = H_as(fs, d_tf).*At1;
-% Ar2 = Ai2.*rp2;
-% At2 = Ai2.*tp2;
-% 
-% z2 = (0:dz:d_tf)';
-% A2 = H_as(fs, -z2).*Ai2 + H_as(fs, z2).*Ar2;
-% 
-% % Angular spectra at the analyte
-% z3 = (d_tf:dz:(d_tf + 10e-6))';
-% A3 = H_as(fs, z3 - d_tf).*At2;
-% 
-% At = [A1;A2;A3];
-% zt = [z1;z2;z3];
-% 
-% [Ut, sp] = i_angular_spectrum(At, fs);
-
 %% Using R-TMM
-zt = ((-40e-6):dz:)
-At = rtmm_tm_efield(Ai1, ang, z, [n1, n2, n3])
+zt = ((-40e-6):dz:10e-6)';
+At = tmm_3p_TM(Ai1, fs, zt, [n1;n2;n3], d_tf, lambda0);
 
+[Ut, sp] = i_angular_spectrum(At, fs);
+
+%% Plot
 execution_time = cputime - t0
 
 figure(Position=[150,150,1500,300])
@@ -119,6 +92,7 @@ xlabel('x($\mu$m)', Interpreter='latex', FontSize=16)
 ylabel('z($\mu$m)', Interpreter='latex', FontSize=16);
 axis equal
 xlim(100*[-1, 1])
-colorbar
+% ylim(5*[-1, 1]);
+% colorbar
 
 
