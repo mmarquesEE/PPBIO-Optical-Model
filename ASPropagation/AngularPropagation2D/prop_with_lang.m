@@ -85,6 +85,7 @@ num_frames = 10;    % Number of animation frames
 [time_points, theta_frac] = ode45(@(t,y) k_on*C*(1.2-y) - k_off*y, ...
                                  linspace(0, t_total, num_frames), 0);
 diff_n = 1e-3*theta_frac'; % Refractive index change
+diff_n = linspace(-1e-2,3e-2,60);
 
 %% Initialize Figures
 fig1 = figure; % Bottom view
@@ -101,12 +102,12 @@ ax4 = axes(fig4);
 
 h_sensogram = plot(ax3, NaN, NaN, 'b-', 'LineWidth', 2);
 
-zt = ((-7e-6):dz:1e-6)';
+zt = ((-15e-6):dz:1e-6)';
 
-filename1 = 'bottom_view_biotin.gif';
-filename2 = 'side_view_biotin.gif';
-filename3 = 'Sensorgram_biotin.gif';
-filename4 = 'FarField_biotin.gif';
+filename1 = 'bottom_view_higherN.gif';
+filename2 = 'side_view_higherN.gif';
+filename3 = 'Sensorgram_higherN.gif';
+filename4 = 'FarField_higherN.gif';
 
 delay_time = 0.1;
 for t = 1:length(diff_n)
@@ -152,18 +153,23 @@ for t = 1:length(diff_n)
     k = 2*pi / lambda1; % Wavevector in medium n1
     
     % Propagation phase factor for each spatial frequency component
-    Z_cam  = -5e-6; % Distance to camera plane [meters]
-    H1 = exp(1j * k * Z_cam * sqrt(1 - (lambda1 * fs1).^2));
+    L = 6e-6; % meters (adjust as needed)
+    delta_z = -L * cos(theta);
+    delta_x = L * sin(theta);
+    
+    % Propagation phase factor
+    H_prop = exp(1j * k * delta_z.* sqrt(1 - (lambda1 * fs1).^2));
+    % Linear phase shift for X displacement
+    H_shift = exp(1j * 2 * pi * fs1 * delta_x);
+    % Apply both propagation and shift
     prop_mask = real(sqrt(1 - (lambda1 * fs1).^2)) > 0;
-    H1 = H1 .* prop_mask;
-    Ar1_propagated = Ar1 .* H1;
-    
-    % Compute fields at Z_cam
+    Ar1_propagated = Ar1 .* H_prop .* H_shift .* prop_mask;
+    % Compute the correct intensity (squared magnitude)
     [Ufar1, x_cam1] = i_angular_spectrum(Ar1_propagated, fs1);
-    
-    % Calculate the intensity (product of intensities from both beams)
-    Intensity = sqrt(abs(Ufar1).*abs(Ufar1'));
-    Intensity = Intensity / max(Intensity(:));
+    Intensity = abs(Ufar1).^2;
+    % If Ufar1 is 1D, replicate for 2D (assuming Y-invariance)
+    [XX, YY] = meshgrid(x_cam1, x_cam1);
+    Intensity = repmat(Intensity, length(x_cam1), 1); % Adjust based on actual data structure
 
     %% Plot Orthogonal Plane to Reflected Beam (Camera-like)
 
@@ -177,26 +183,30 @@ for t = 1:length(diff_n)
     v2 = cross(n_vec, v1);       v2 = v2 / norm(v2); % Tangent vector 2
     
      % Create grid with proper coordinate ranges
-    Lx = 10e-6; % X-span (along v2 direction)
+    Lx = 200e-6; % X-span (along v2 direction)
     Ly = 100e-6; % Y-span (along v1 direction)
     N = 600;
     
     % X: 0 to positive, Y: symmetric negative/positive
     [u, v] = meshgrid(linspace(0, Lx, N), linspace(-Ly, Ly, N));
-    origin = [0*1e-6,0*1e-6,-10*1e-6];%n_vec * Z_cam;  % Center of the plane at Z_cam
+    origin = [0,0,-200*1e-6];%n_vec * Z_cam;  % Center of the plane at Z_cam
     
     X_plane = origin(1) + u*v2(1) + v*v1(1);
     Y_plane = origin(2) + u*v2(2) + v*v1(2);
     Z_plane = origin(3) + u*v2(3) + v*v1(3);
 
     % === Step 4: Interpolate intensity onto rotated plane ===
-    % Use existing camera grid (x_cam1, x_cam2), Intensity
-    [cam_X, cam_Y] = meshgrid(x_cam1, x_cam1);  % Original far-field grid
+    % Original far-field grid (after propagation and shift)
+    cam_X = x_cam1 + delta_x; % Shifted X coordinates
+    cam_Y = x_cam1; % Y remains the same if invariant
     
+    % Interpolate onto rotated plane coordinates
+    RotatedIntensity = interp2(cam_X, cam_Y, Intensity, ...
+                               X_plane, Y_plane, 'linear', 0);
+    RotatedIntensity = RotatedIntensity./max(RotatedIntensity(:));
     % Interpolate with safety (fill missing with 0)
-    RotatedIntensity = interp2(cam_X, cam_Y, Intensity, X_plane, Y_plane, 'linear', 0);
     % === Step 5: Plot the rotated camera plane ===
-    surf(ax4, X_plane*1e6, Y_plane*1e6, Z_plane*1e6, RotatedIntensity, ...
+    surf(ax4, X_plane*1e6, Y_plane*1e6, Z_plane*1e5, RotatedIntensity, ...
      'EdgeColor', 'none', 'FaceAlpha', 1);
     xlabel('X (um)');ylabel('Y (um)');zlabel('Z (um)');
     title(ax4, sprintf('Orthogonal Plane View (t = %.1f s)', time_points(t)));
