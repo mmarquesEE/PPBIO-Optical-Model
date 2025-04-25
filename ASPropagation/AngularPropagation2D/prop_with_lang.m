@@ -85,15 +85,12 @@ num_frames = 10;    % Number of animation frames
 [time_points, theta_frac] = ode45(@(t,y) k_on*C*(1.2-y) - k_off*y, ...
                                  linspace(0, t_total, num_frames), 0);
 diff_n = 1e-3*theta_frac'; % Refractive index change
-diff_n = linspace(-1e-2,3e-2,60);
+diff_n = linspace(-1e-2,3e-1,60);
 
 %% Initialize Figures
-fig1 = figure; % Bottom view
 fig2 = figure('Position', [100, 100, 1200, 150]);% Field Distribution
 fig3 = figure('Position', [300, 300, 800, 400]); % Sensogram
 fig4 = figure; % Far Field
-ax1 = axes(fig1);
-title(ax1, 'Beam Cross-Section');
 ax2 = axes(fig2);
 colormap(ax2, parula(256));
 ax3 = axes(fig3);
@@ -102,9 +99,8 @@ ax4 = axes(fig4);
 
 h_sensogram = plot(ax3, NaN, NaN, 'b-', 'LineWidth', 2);
 
-zt = ((-15e-6):dz:1e-6)';
+zt = ((-20e-6):dz:1e-6)';
 
-filename1 = 'bottom_view_higherN.gif';
 filename2 = 'side_view_higherN.gif';
 filename3 = 'Sensorgram_higherN.gif';
 filename4 = 'FarField_higherN.gif';
@@ -116,18 +112,8 @@ for t = 1:length(diff_n)
     [At2, rp2, ~] = tmm_3p_TM(Ai2, fs1, zt(1:2), [n1;n2;1], d_tf, lambda0);
     % Reconstruct fields
     [Ut1, sp1] = i_angular_spectrum(At1, fs1);
-    [Ut2, ~] = i_angular_spectrum(At2, fs2);
-    
-    [Ux, Uy] = meshgrid(Ut1(1,:), Ut2(1,:));
-    [XX , ] = meshgrid(x,x);
-    
-    idx = (XX > 0.4e-5) & (XX < 1.2e-5);
-    %% Plot 1: Beam Cross-Section
-    imagesc(ax1,sqrt(abs(Ux(idx)).*abs(Uy(idx)))')
-    title(ax1, sprintf('t = %.1f s (Δn = %.2e)', time_points(t), diff_n(t)));
-    colormap(ax1, 'gray'); % Set to grayscale
-    xlabel off
-    ylabel off
+    [Ut2, sp2] = i_angular_spectrum(At2, fs2);
+
     %% Plot 2: Field Distribution
     hold on
     imagesc(ax2,-1e6*sp1, 1e6*zt, abs(Ut1))
@@ -137,7 +123,7 @@ for t = 1:length(diff_n)
     Interpreter='latex', FontSize=16)
     xlabel('x($\mu$m)', Interpreter='latex', FontSize=16)
     ylabel('z($\mu$m)', Interpreter='latex', FontSize=16);
-    xlim(ax2,40*[-1, 1])
+    xlim(ax2,150*[-1, 1])
     set(ax2, 'YDir', 'normal')  % <<< This line inverts the Z axis
     hold off
     %% Update Sensogram
@@ -148,12 +134,12 @@ for t = 1:length(diff_n)
 
    % Compute reflected angular spectra
     Ar1 = rp1 .* Ai1; % Reflected spectrum for beam 1
-    
+    Ar2 = rp2 .*Ai2;
     % Apply propagation to Z_cam using angular spectrum method
     k = 2*pi / lambda1; % Wavevector in medium n1
     
     % Propagation phase factor for each spatial frequency component
-    L = 6e-6; % meters (adjust as needed)
+    L = 5e-6; % meters (adjust as needed)
     delta_z = -L * cos(theta);
     delta_x = L * sin(theta);
     
@@ -164,9 +150,18 @@ for t = 1:length(diff_n)
     % Apply both propagation and shift
     prop_mask = real(sqrt(1 - (lambda1 * fs1).^2)) > 0;
     Ar1_propagated = Ar1 .* H_prop .* H_shift .* prop_mask;
+    % Propagation phase factor for 2
+    H_prop2 = exp(1j * k * delta_z.* sqrt(1 - (lambda1 * fs2).^2));
+    % Linear phase shift for X displacement
+    H_shift2 = exp(1j * 2 * pi * fs2 * delta_x);
+    % Apply both propagation and shift
+    prop_mask2 = real(sqrt(1 - (lambda1 * fs2).^2)) > 0;
+    Ar2_propagated = Ar2 .* H_prop2 .* H_shift2 .* prop_mask2;
     % Compute the correct intensity (squared magnitude)
     [Ufar1, x_cam1] = i_angular_spectrum(Ar1_propagated, fs1);
-    Intensity = abs(Ufar1).^2;
+    [Ufar2, x_cam2] = i_angular_spectrum(Ar2_propagated, fs2);
+    Intensity1 = abs(Ufar1).^2;Intensity_ref = abs(Ufar2).^2;
+    Intensity = Intensity1./Intensity_ref;
     % If Ufar1 is 1D, replicate for 2D (assuming Y-invariance)
     [XX, YY] = meshgrid(x_cam1, x_cam1);
     Intensity = repmat(Intensity, length(x_cam1), 1); % Adjust based on actual data structure
@@ -182,15 +177,12 @@ for t = 1:length(diff_n)
     v1 = [0; 1; 0]; v1 = v1 / norm(v1); % Tangent vector 1
     v2 = cross(n_vec, v1);       v2 = v2 / norm(v2); % Tangent vector 2
     
-     % Create grid with proper coordinate ranges
-    Lx = 200e-6; % X-span (along v2 direction)
-    Ly = 100e-6; % Y-span (along v1 direction)
-    N = 600;
-    
     % X: 0 to positive, Y: symmetric negative/positive
-    [u, v] = meshgrid(linspace(0, Lx, N), linspace(-Ly, Ly, N));
-    origin = [0,0,-200*1e-6];%n_vec * Z_cam;  % Center of the plane at Z_cam
-    
+    % Define plane dimensions
+    Lx = 150e-6; Ly = 50e-6; % Adjust spans to focus on x>0, z<0
+    N = 1000;
+    [u, v] = meshgrid(linspace(0, Lx, N), linspace(-Ly/2, Ly/2, N)); % u starts at 0 for x>0    origin = [0,0,-200*1e-6];%n_vec * Z_cam;  % Center of the plane at Z_cam
+    origin = [0, 0, -150e-6]; % Align with z from -20e-6 to 0
     X_plane = origin(1) + u*v2(1) + v*v1(1);
     Y_plane = origin(2) + u*v2(2) + v*v1(2);
     Z_plane = origin(3) + u*v2(3) + v*v1(3);
@@ -206,8 +198,9 @@ for t = 1:length(diff_n)
     RotatedIntensity = RotatedIntensity./max(RotatedIntensity(:));
     % Interpolate with safety (fill missing with 0)
     % === Step 5: Plot the rotated camera plane ===
-    surf(ax4, X_plane*1e6, Y_plane*1e6, Z_plane*1e5, RotatedIntensity, ...
+    surf(ax4, X_plane*1e6, Y_plane*1e6, Z_plane*1e6, RotatedIntensity, ...
      'EdgeColor', 'none', 'FaceAlpha', 1);
+
     xlabel('X (um)');ylabel('Y (um)');zlabel('Z (um)');
     title(ax4, sprintf('Orthogonal Plane View (t = %.1f s)', time_points(t)));
     colormap(ax4,"gray");
@@ -218,11 +211,6 @@ for t = 1:length(diff_n)
             'Color', 'cyan', 'LineWidth', 2, 'MaxHeadSize', 2);
     text(n_vec(1)*1.1e-5, n_vec(2)*1.1e-5, n_vec(3)*1.1e-5, 'Beam →', ...
          'Color', 'cyan', 'FontSize', 12);
-
-    % Captura o frame e converte para imagem indexada
-    frame1 = getframe(fig1);
-    im1 = frame2im(frame1);
-    [imind1, cm1] = rgb2ind(im1, 256);
 
     % Captura o frame e converte para imagem indexada
     frame2 = getframe(fig2);
@@ -241,13 +229,11 @@ for t = 1:length(diff_n)
     
     % Escreve no GIF
     if t == 1
-        imwrite(imind1, cm1, filename1, 'gif', 'Loopcount', inf, 'DelayTime', delay_time);
         imwrite(imind2, cm2, filename2, 'gif', 'Loopcount', inf, 'DelayTime', delay_time);
         imwrite(imind3, cm3, filename3, 'gif', 'Loopcount', inf, 'DelayTime', delay_time);
         imwrite(imind4, cm4, filename4, 'gif', 'Loopcount', inf, 'DelayTime', 0.1);
 
     else
-        imwrite(imind1, cm1, filename1, 'gif', 'WriteMode', 'append', 'DelayTime', delay_time);
         imwrite(imind2, cm2, filename2, 'gif', 'WriteMode', 'append', 'DelayTime', delay_time);
         imwrite(imind3, cm3, filename3, 'gif', 'WriteMode', 'append', 'DelayTime', delay_time);
         imwrite(imind4, cm4, filename4, 'gif', 'WriteMode', 'append', 'DelayTime', delay_time);
