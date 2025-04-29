@@ -58,7 +58,7 @@ U2 = gb_complex_amplitude(0.3, x, z, k, w02, z02);
 [Ai1, fs1] = angular_spectrum(U1, s);
 [Ai2, fs2] = angular_spectrum(U2, s);
 % Propagation phase factor for each spatial frequency component
-L = (30/cos(theta))*1e-6; % meters (adjust as needed)
+L = 15*1e-6; % meters (adjust as needed)
 delta_z = -L * cos(theta);
 delta_x = L * sin(theta);
 ztm = 2;
@@ -70,7 +70,7 @@ Ar2 = rp2 .*Ai2;
 % Apply propagation to Z_cam using angular spectrum method
 k = 2*pi / lambda1; % Wavevector in medium n1
 
-H_prop2 = exp(1j * k * delta_z.* sqrt(1 - (lambda1 * fs2).^2));
+H_prop2 = exp(1j * k * -delta_z.* sqrt(1 - (lambda1 * fs2).^2));
 % Linear phase shift for X displacement
 H_shift2 = exp(1j * 2 * pi * fs2 * delta_x);
 % Apply both propagation and shift
@@ -115,7 +115,7 @@ for t = 1:length(diff_n)
     % Compute reflected angular spectra
     Ar1 = rp1 .* Ai1; % Reflected spectrum for beam 1
     % Propagation phase factor
-    H_prop = exp(1j * k * delta_z.* sqrt(1 - (lambda1 * fs1).^2));
+    H_prop = exp(1j * k * -delta_z.* sqrt(1 - (lambda1 * fs1).^2));
     % Linear phase shift for X displacement
     H_shift = exp(1j * 2 * pi * fs1 * delta_x);
     % Apply both propagation and shift
@@ -124,7 +124,7 @@ for t = 1:length(diff_n)
     % Compute the correct intensity (squared magnitude)
     [Ufar1, x_cam1] = i_angular_spectrum(Ar1_propagated, fs1);
     Intensity1 = abs(Ufar1).^2;Intensity_ref = abs(Ufar2).^2;
-    Intensity = Intensity1(:).' ./ Intensity_ref(:).';
+    Intensity = Intensity1;%.' ./ Intensity_ref(:).';
     % If Ufar1 is 1D, replicate for 2D (assuming Y-invariance)
     [XX, YY] = meshgrid(x_cam1, x_cam1);
     %% Update Sensogram
@@ -141,7 +141,7 @@ for t = 1:length(diff_n)
     % === Step 2: Vectors in the orthogonal plane ===
 
     v1 = [0; 1; 0]; v1 = v1 / norm(v1); % Tangent vector 1
-    v2 = cross(n_vec', v1); v2 = v2 / norm(v2); % Tangent vector 2
+    v2 = cross(n_vec, v1); v2 = v2 / norm(v2); % Tangent vector 2
     
     % X: 0 to positive, Y: symmetric negative/positive
     % Define plane dimensions
@@ -167,7 +167,7 @@ for t = 1:length(diff_n)
     RotatedIntensity = RotatedIntensity./max(RotatedIntensity(:));
     % Interpolate with safety (fill missing with 0)
     % === Step 5: Plot the rotated camera plane ===
-    surf(ax4, X_plane*1e6, Y_plane*1e6, Z_plane*1e6,  1-RotatedIntensity, ...
+    surf(ax4, X_plane*1e6, Y_plane*1e6, Z_plane*1e6,  RotatedIntensity, ...
      'EdgeColor', 'none', 'FaceAlpha', 1);
     xlabel('X (um)');ylabel('Y (um)');zlabel('Z (um)');
     title(ax4, sprintf('Orthogonal Plane View (t = %.1f s)', time_points(t)));
