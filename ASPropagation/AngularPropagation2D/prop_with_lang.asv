@@ -45,9 +45,9 @@ z02 = lambda1/(pi*theta02^2);
 d_alpha = 0.02/180*pi;
 ds = d_alpha;
 dz = d_tf/4;
-s = ds*linspace(-0.5,0.5,2^13);
+s = ds*linspace(-1,1,2^13);
 % Incident Angle Configuration
-theta = 68.8/180*pi;
+theta = 68/180*pi;
 % Coordinate transformation
 x = s*cos(theta);
 z = -s*sin(theta);
@@ -58,11 +58,11 @@ U2 = gb_complex_amplitude(0.3, x, z, k, w02, z02);
 [Ai1, fs1] = angular_spectrum(U1, s);
 [Ai2, fs2] = angular_spectrum(U2, s);
 % Propagation phase factor for each spatial frequency component
-L = (5/cos(theta))*1e-6; % meters (adjust as needed)
+L = (8/cos(theta))*1e-6; % meters (adjust as needed)
 delta_z = -L * cos(theta);
 delta_x = L * sin(theta);
-zt = ((2*delta_z):dz:0e-6)';
-[At2, rp2, ~] = tmm_3p_TM(Ai2, fs1, zt(1:2), [n1;n2;1], d_tf, lambda0);
+zt = ((10*delta_z):dz:1e-6)';
+[At2, rp2, ~] = tmm_3p_TM(Ai2, fs1, zt(1:2), [n1;n2;1.0003], d_tf, lambda0);
 [Ut2, sp2] = i_angular_spectrum(At2, fs2);
 Ar2 = rp2 .*Ai2;
 % Propagation phase factor for 2
@@ -83,13 +83,13 @@ C = 0.82e-3;         % [M]
 
 % Simulation time parameters
 t_total = 40;      % [s] Total simulation time
-num_frames = 10;    % Number of animation frames
+num_frames = 20;    % Number of animation frames
 
 % Solve Langmuir Kinetics
 [time_points, theta_frac] = ode45(@(t,y) k_on*C*(1.2-y) - k_off*y, ...
-                                 linspace(0, t_total, num_frames), 0);
-diff_n = 1e-3*theta_frac'; % Refractive index change
-diff_n = linspace(0e-2,8e-2,20);
+                                linspace(0, t_total, num_frames), 0);
+%diff_n = 1e-3*theta_frac'; % Refractive index change
+diff_n = linspace(-1e-3,8e-2,num_frames);
 
 %% Initialize Figures
 fig2 = figure('Position', [100, 100, 1200, 150]);% Field Distribution
@@ -123,10 +123,9 @@ for t = 1:length(diff_n)
     % Compute the correct intensity (squared magnitude)
     [Ufar1, x_cam1] = i_angular_spectrum(Ar1_propagated, fs1);
     Intensity1 = abs(Ufar1).^2;Intensity_ref = abs(Ufar2).^2;
-    Intensity = Intensity1./Intensity_ref;
+    Intensity = Intensity1(:).' ./ Intensity_ref(:).';
     % If Ufar1 is 1D, replicate for 2D (assuming Y-invariance)
     [XX, YY] = meshgrid(x_cam1, x_cam1);
-    Intensity = repmat(Intensity, length(x_cam1), 1); % Adjust based on actual data structure
     %% Update Sensogram
     set(h_sensogram, 'XData', time_points(1:t), 'YData', diff_n(1:t));
     xlabel(ax3, 'Time (s)');
@@ -141,30 +140,30 @@ for t = 1:length(diff_n)
     % === Step 2: Vectors in the orthogonal plane ===
 
     v1 = [0; 1; 0]; v1 = v1 / norm(v1); % Tangent vector 1
-    v2 = cross(n_vec, v1);       v2 = v2 / norm(v2); % Tangent vector 2
+    v2 = cross(n_vec, v1); v2 = v2 / norm(v2); % Tangent vector 2
     
     % X: 0 to positive, Y: symmetric negative/positive
     % Define plane dimensions
-    Lx = -delta_z; Ly = 100e-6; % Adjust spans to focus on x>0, z<0
-    N = 1000;
+    Lx = -2*delta_z; Ly = 100e-6; % Adjust spans to focus on x>0, z<0
+    N = 2000;
     [u, v] = meshgrid(linspace(0, Lx, N), linspace(-Ly/2, Ly/2, N)); % u starts at 0 for x>0    origin = [0,0,-200*1e-6];%n_vec * Z_cam;  % Center of the plane at Z_cam
-    origin = [delta_x, 0, delta_z*v2(3)]; % Align with z from -20e-6 to 0
+    origin = [delta_x, 0, 10*delta_z*v2(3)]; % Align with z from -20e-6 to 0
     X_plane = origin(1) + u*v2(1) + v*v1(1);
     Y_plane = origin(2) + u*v2(2) + v*v1(2);
     Z_plane = origin(3) + u*v2(3) + v*v1(3);
 
     % === Step 4: Interpolate intensity onto rotated plane ===
     % Original far-field grid (after propagation and shift)
-    cam_X = x_cam1 + delta_x; % Shifted X coordinates
-    cam_Y = x_cam1; % Y remains the same if invariant
-    
+    y_cam = linspace(-Ly/2, Ly/2, length(x_cam1))'; % Y remains the same if invariant
+    [X_cam, Y_cam] = meshgrid(x_cam1 + delta_x, y_cam);
     % Interpolate onto rotated plane coordinates
-    RotatedIntensity = interp2(cam_X, cam_Y, Intensity, ...
+    Intensity = repmat(Intensity, length(y_cam), 1); % Adjust based on actual data structure
+    RotatedIntensity = interp2(X_cam, Y_cam, Intensity, ...
                                X_plane/cos(theta), Y_plane, 'linear', 0);
     RotatedIntensity = RotatedIntensity./max(RotatedIntensity(:));
     % Interpolate with safety (fill missing with 0)
     % === Step 5: Plot the rotated camera plane ===
-    surf(ax4, X_plane/cos(theta)*1e6, Y_plane*1e6, Z_plane/sin(theta)*1e6, 1-RotatedIntensity, ...
+    surf(ax4, X_plane/cos(theta)*1e6, Y_plane*1e6, Z_plane/sin(theta)*1e6,  RotatedIntensity, ...
      'EdgeColor', 'none', 'FaceAlpha', 1);
     xlabel('X (um)');ylabel('Y (um)');zlabel('Z (um)');
     title(ax4, sprintf('Orthogonal Plane View (t = %.1f s)', time_points(t)));
@@ -188,7 +187,7 @@ for t = 1:length(diff_n)
     ylabel('z($\mu$m)', Interpreter='latex', FontSize=16);
     xlim(ax2,150*[-1, 1])
     set(ax2, 'YDir', 'normal')  % <<< This line inverts the Z axis
-
+    colormap(ax2,"gray");
     % Calculate and plot the intersection line
     hold(ax2, 'on');
     u_line = linspace(0, Lx, 100);
