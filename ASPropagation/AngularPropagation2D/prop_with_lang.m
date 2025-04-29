@@ -58,10 +58,10 @@ U2 = gb_complex_amplitude(0.3, x, z, k, w02, z02);
 [Ai1, fs1] = angular_spectrum(U1, s);
 [Ai2, fs2] = angular_spectrum(U2, s);
 % Propagation phase factor for each spatial frequency component
-L = 5e-6; % meters (adjust as needed)
+L = (5/cos(theta))*1e-6; % meters (adjust as needed)
 delta_z = -L * cos(theta);
 delta_x = L * sin(theta);
-zt = ((4*delta_z):dz:1e-6)';
+zt = ((3*delta_z):dz:0e-6)';
 [At2, rp2, ~] = tmm_3p_TM(Ai2, fs1, zt(1:2), [n1;n2;1], d_tf, lambda0);
 [Ut2, sp2] = i_angular_spectrum(At2, fs2);
 Ar2 = rp2 .*Ai2;
@@ -89,7 +89,7 @@ num_frames = 10;    % Number of animation frames
 [time_points, theta_frac] = ode45(@(t,y) k_on*C*(1.2-y) - k_off*y, ...
                                  linspace(0, t_total, num_frames), 0);
 diff_n = 1e-3*theta_frac'; % Refractive index change
-diff_n = linspace(-1e-2,3e-1,60);
+diff_n = linspace(0e-2,8e-2,20);
 
 %% Initialize Figures
 fig2 = figure('Position', [100, 100, 1200, 150]);% Field Distribution
@@ -145,10 +145,10 @@ for t = 1:length(diff_n)
     
     % X: 0 to positive, Y: symmetric negative/positive
     % Define plane dimensions
-    Lx = -4*delta_z; Ly = 50e-6; % Adjust spans to focus on x>0, z<0
+    Lx = -3*delta_z; Ly = 100e-6; % Adjust spans to focus on x>0, z<0
     N = 1000;
     [u, v] = meshgrid(linspace(0, Lx, N), linspace(-Ly/2, Ly/2, N)); % u starts at 0 for x>0    origin = [0,0,-200*1e-6];%n_vec * Z_cam;  % Center of the plane at Z_cam
-    origin = [delta_x, 0, 4*delta_z]; % Align with z from -20e-6 to 0
+    origin = [delta_x, 0, 3*delta_z*v2(3)]; % Align with z from -20e-6 to 0
     X_plane = origin(1) + u*v2(1) + v*v1(1);
     Y_plane = origin(2) + u*v2(2) + v*v1(2);
     Z_plane = origin(3) + u*v2(3) + v*v1(3);
@@ -164,7 +164,7 @@ for t = 1:length(diff_n)
     RotatedIntensity = RotatedIntensity./max(RotatedIntensity(:));
     % Interpolate with safety (fill missing with 0)
     % === Step 5: Plot the rotated camera plane ===
-    surf(ax4, X_plane*1e6, Y_plane*1e6, Z_plane*1e6, RotatedIntensity, ...
+    surf(ax4, X_plane/cos(theta)*1e6, Y_plane*1e6, Z_plane/sin(theta)*1e6, 1-RotatedIntensity, ...
      'EdgeColor', 'none', 'FaceAlpha', 1);
     xlabel('X (um)');ylabel('Y (um)');zlabel('Z (um)');
     title(ax4, sprintf('Orthogonal Plane View (t = %.1f s)', time_points(t)));
@@ -199,7 +199,7 @@ for t = 1:length(diff_n)
     % Convert to imagesc coordinates
     s_line = X_line_plane/cos(theta); % X = s*cos(theta) => s = X/cos(theta)
     imagesc_x_line = s_line * 1e6; % imagesc x is -s*1e6
-    imagesc_z_line = Z_line_plane * 1e6; % Convert Z to micrometers
+    imagesc_z_line = Z_line_plane/sin(theta) * 1e6; % Convert Z to micrometers
     
     plot(ax2, imagesc_x_line, imagesc_z_line, 'r-', 'LineWidth', 2);
     hold(ax2, 'off');
