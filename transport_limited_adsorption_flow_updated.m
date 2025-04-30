@@ -1,0 +1,249 @@
+function transport_limited_adsorption_flow
+    % Main function for flow-driven adsorption simulation
+    clear all; close all; clc;
+
+    % ==================== SIMULATION PARAMETERS ====================
+    gridN = 20;                     % 20x20 grid (reduced for faster computation)
+    roughness_scale = 0.5;          % Surface roughness intensity (0-1)
+    c0 = 1000e-9;                    % Inlet concentration (M)
+    c0_diss = 0;                    % Dissociation phase concentration
+    k_flow_horizontal = 5;          % Horizontal flow rate (columns/s)
+    k_flow_vertical = 2;          % Vertical flow rate (rows/s)
+    ru_to_m = 1e-6;                
+    t_association = 800;            % Association phase duration (s)
+    t_dissociation = 1500;          % Total simulation time (s)
+    inlet_row = round(gridN/2);     % Mid-height inlet
+
+    % ==================== PARAMETER GENERATION ====================
+    [kon_grid, koff_grid, smax_grid] = generate_grid_parameters(gridN, roughness_scale);
+    
+    % ==================== SIMULATION EXECUTION ====================
+    [t, c_s, s] = simulate_flow_model(gridN, kon_grid, koff_grid, smax_grid,...
+                                      k_flow_horizontal, k_flow_vertical,...
+                                      c0, c0_diss, inlet_row,...
+                                      t_association, t_dissociation, ru_to_m);    
+    % ==================== VISUALIZATION ====================
+    create_main_figures(t, c_s, s, kon_grid, koff_grid, smax_grid, gridN);
+    %create_flow_gif(t, c_s, s, gridN, c0);
+    create_flow_animation(t, c_s, s, inlet_row);
+end
+
+%% Helper Functions
+function [kon_grid, koff_grid, smax_grid] = generate_grid_parameters(gridN, roughness_scale)
+    % Generates spatially correlated surface parameters
+    [X,Y] = meshgrid(linspace(-1,1,gridN));
+    Z = exp(-(X.^2 + Y.^2)/0.3);
+    
+    roughness = imfilter(randn(gridN), Z, 'circular');
+    roughness = roughness/max(abs(roughness(:)));
+    koff = 1e-3;KD=1e-9;
+    % Base parameters with physical constraints
+    kon_grid = koff ./ KD * (1 + roughness_scale*roughness);
+    koff_grid = koff * (1 - 0.4*roughness_scale*roughness);
+    smax_grid = 100*(1 + 0.2*roughness_scale*roughness);  % RU/site
+end
+
+function [t, c_s, s] = simulate_flow_model(gridN, kon_grid, koff_grid, smax_grid,...
+                                          k_flow_h, k_flow_v, c0_assoc, c0_diss,...
+                                          inlet_row, t_assoc, t_total, ru_to_m)
+    % Initialize state variables
+    c_s = zeros(gridN, gridN);      % 2D concentration grid
+    s = zeros(gridN, gridN);        % 2D coverage grid
+    
+    % Flatten for ODE solver
+    y0 = [c_s(:); s(:)];
+    
+    % Time parameters
+    tspan_assoc = linspace(0, t_assoc, 50);
+    tspan_diss = linspace(t_assoc, t_total, 50);
+    
+    % Solve ODE
+    options = odeset('RelTol',1e-5,'AbsTol',1e-8);
+    [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t,y,c0_assoc), tspan_assoc, y0, options);
+    [t_diss, y_diss] = ode15s(@(t,y) ode_system(t,y,c0_diss), tspan_diss, y_assoc(end,:)', options);
+    
+    % Combine results
+    t = [t_assoc; t_diss];
+    y = [y_assoc; y_diss];
+    
+    % Reshape results
+    c_s = reshape(y(:,1:gridN^2), [length(t), gridN, gridN]);
+    s = reshape(y(:,gridN^2+1:end), [length(t), gridN, gridN]);
+
+    function dydt = ode_system(t, y, current_c0)
+        % Unpack state variables
+        c_s = reshape(y(1:gridN^2), gridN, gridN);
+        s = reshape(y(gridN^2+1:end), gridN, gridN);
+        
+        % Initialize derivatives
+        dcsdt = zeros(gridN, gridN);
+        dsdt = zeros(gridN, gridN);
+        
+        % ==================== FLOW TRANSPORT ====================
+        % Horizontal flow (left to right between columns)
+        for col = 2:gridN
+            dcsdt(:,col) = dcsdt(:,col) + k_flow_h * (c_s(:,col-1) - c_s(:,col));
+        end
+        
+        % Vertical flow (from inlet row)
+        for row = 1:gridN
+            if row == inlet_row
+                % Inlet boundary condition (column 1 only)
+                dcsdt(row,1) = dcsdt(row,1) + k_flow_v * (current_c0 - c_s(row,1));
+            else
+                % Vertical diffusion-like transport
+                dcsdt(row,1) = dcsdt(row,1) + k_flow_v * (c_s(inlet_row,1) - c_s(row,1));
+            end
+        end
+        
+        % ==================== BINDING KINETICS ====================
+        for i = 1:gridN
+            for j = 1:gridN
+                dsdt(i,j) = kon_grid(i,j) * c_s(i,j) * (smax_grid(i,j) - s(i,j)) - ...
+                            koff_grid(i,j) * s(i,j);
+                dcsdt(i,j) = dcsdt(i,j) - dsdt(i,j) * ru_to_m;
+            end
+        end
+        
+        % Flatten derivatives for ODE solver
+        dydt = [dcsdt(:); dsdt(:)];
+    end
+end
+
+%% Visualization Functions
+function create_main_figures(t, c_s, s, kon_grid, koff_grid, smax_grid, gridN)
+    % Creates analysis figures for 2D flow model
+    
+    figure('Name','System Analysis','Position',[100 100 1200 800])
+    
+    % ==================== Final Coverage Map ====================
+    subplot(2,3,1)
+    final_coverage = squeeze(s(end,:,:));
+    imagesc(final_coverage)
+    title('Final Coverage Map'), axis equal tight
+    colorbar, caxis([0 max(smax_grid(:))])
+    
+    % ==================== Concentration Front Propagation ====================
+    subplot(2,3,2)
+    % Average concentration across rows for each column
+    c_s_avg = squeeze(mean(c_s, 2));  % Now [time × columns]
+    [X,T] = meshgrid(1:gridN, t);
+    contourf(X,T,c_s_avg,20,'LineColor','none')
+    title('Axial Concentration Propagation')
+    xlabel('Column Number'), ylabel('Time (s)')
+    colorbar
+    
+    % ==================== Parameter Distributions ====================
+    subplot(2,3,3)
+    hold on
+    histogram(kon_grid(:),'BinMethod','scott','FaceAlpha',0.6)
+    histogram(koff_grid(:),'BinMethod','scott','FaceAlpha',0.6)
+    histogram(smax_grid(:),'BinMethod','scott','FaceAlpha',0.6)
+    title('Parameter Distributions')
+    legend('k_{on}','k_{off}','s_{max}')
+    
+    % ==================== Coverage Dynamics ====================
+    subplot(2,3,4)
+    hold on
+    cols_to_plot = round(linspace(1,gridN,3));
+    for col = cols_to_plot
+        % Average coverage across rows in selected column
+        plot(t, mean(s(:, :, col), 2), 'LineWidth',2)
+    end
+    title('Coverage Dynamics by Column')
+    xlabel('Time (s)'), ylabel('Coverage (RU)')
+    
+    % ==================== Parameter Correlations ====================
+    subplot(2,3,5)
+    scatter3(kon_grid(:), koff_grid(:), smax_grid(:), 50, 'filled')
+    title('Parameter Correlations')
+    xlabel('k_{on}'), ylabel('k_{off}'), zlabel('s_{max}')
+    grid on
+    
+    % ==================== Total Coverage ====================
+    subplot(2,3,6)
+    total_coverage = sum(s, [2 3]);  % Sum over both spatial dimensions
+    plot(t, total_coverage, 'LineWidth',2)
+    title('Total Surface Coverage')
+    xlabel('Time (s)'), ylabel('Total RU')
+end
+
+function create_flow_gif(t, c_s, s, gridN, c0)
+    % Creates animated GIF of flow process
+    filename = 'flow_adsorption.gif';
+    h = figure('Position',[100 100 1200 500]);
+    
+    for i = 1:length(t)
+        % Coverage map
+        subplot(1,2,1)
+        imagesc(reshape(s(i,:), gridN, gridN))
+        title(['Surface Coverage @ ' num2str(t(i),'%.1f') 's'])
+        caxis([0 max(s(:))]), axis equal tight
+        colorbar
+        
+        % Concentration profile
+        subplot(1,2,2)
+        plot(1:gridN, c_s(i,:), 'LineWidth',2)
+        title('Axial Concentration Profile')
+        xlabel('Column Number'), ylabel('Concentration (M)')
+        ylim([0 1.2*c0]), grid on
+        
+        % Capture frame
+        frame = getframe(h);
+        im = frame2im(frame);
+        [imind,cm] = rgb2ind(im,256);
+        
+        % Write to GIF
+        if i == 1
+            imwrite(imind,cm,filename,'gif','DelayTime',0.1,'LoopCount',inf)
+        else
+            imwrite(imind,cm,filename,'gif','DelayTime',0.1,'WriteMode','append')
+        end
+    end
+end
+
+%% Enhanced Visualization
+function create_flow_animation(t, c_s, s, inlet_row)
+    filename = '2D_flow_animation.gif';
+    h = figure('Position', [100 100 800 400], 'Color', 'w');
+    
+    max_conc = max(c_s(:));
+    max_cov = max(s(:));
+    
+    for i = 1:length(t)
+        % Concentration Profile
+        subplot(1,2,1);
+        imagesc(squeeze(c_s(i,:,:)));
+        hold on;
+        plot(1, inlet_row, 'r.', 'MarkerSize', 20); % Inlet marker
+        hold off;
+        title(sprintf('Concentration @ t = %.1fs', t(i)));
+        xlabel('Columns'); ylabel('Rows');
+        axis equal tight;
+        colorbar;
+        caxis([0 max_conc]);
+        
+        % Surface Coverage
+        subplot(1,2,2);
+        imagesc(squeeze(s(i,:,:)));
+        title('Surface Coverage');
+        xlabel('Columns'); ylabel('Rows');
+        axis equal tight;
+        colorbar;
+        caxis([0 max_cov]);
+        
+        % Capture frame
+        frame = getframe(h);
+        im = frame2im(frame);
+        [imind, cm] = rgb2ind(im, 256);
+        
+        % Write to GIF
+        if i == 1
+            imwrite(imind, cm, filename, 'gif',...
+                    'LoopCount', inf, 'DelayTime', 0.1);
+        else
+            imwrite(imind, cm, filename, 'gif',...
+                    'WriteMode', 'append', 'DelayTime', 0.1);
+        end
+    end
+end

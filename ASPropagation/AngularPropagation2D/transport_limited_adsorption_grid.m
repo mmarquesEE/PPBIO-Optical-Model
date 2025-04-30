@@ -1,0 +1,165 @@
+function transport_limited_adsorption
+    % Original system parameters
+    clear all; close all; clc;
+    
+    % ==================== GRID SIMULATION ====================
+    % Grid parameters
+    gridN = 3;                      % 10x10 grid
+    roughness_scale = 0.5;          % Roughness intensity (0-1)
+    c0_grid = 100e-9;               % Concentration for grid visualization
+    k_tr = 1e8;                     % Transport rate (RU/M/s)
+
+    % Generate grid parameters with roughness
+    [kon_grid, koff_grid, smax_grid] = generate_grid_parameters(gridN, roughness_scale);
+    
+    % Create parameter distribution plots
+    figure('Name','Grid Parameter Distributions');
+    subplot(1,3,1);
+    histogram(kon_grid(:), 'Normalization','pdf');
+    title('k_{on} Distribution'); xlabel('M^{-1}s^{-1}'); 
+    
+    subplot(1,3,2);
+    histogram(koff_grid(:), 'Normalization','pdf');
+    title('k_{off} Distribution'); xlabel('s^{-1}');
+    
+    subplot(1,3,3);
+    histogram(smax_grid(:), 'Normalization','pdf');
+    title('s_{max} Distribution'); xlabel('RU');
+    
+    % Simulate grid system
+    [t_grid, c_s_grid, s_grid] = simulate_grid_model(gridN, kon_grid, koff_grid, smax_grid, k_tr, c0_grid);
+    
+    % Create comprehensive grid visualization
+    figure('Name','Grid System Analysis');
+    
+    % Subplot 1: Average coverage vs time
+    subplot(2,2,1);
+    avg_coverage = mean(s_grid, 2);
+    plot(t_grid, avg_coverage, 'LineWidth', 2);
+    title('Average Surface Coverage');
+    xlabel('Time (s)'); ylabel('RU');
+    grid on;
+    
+    % Subplot 2: Surface concentration
+    subplot(2,2,2);
+    plot(t_grid, c_s_grid, 'LineWidth', 2);
+    title('Surface Compartment Concentration');
+    xlabel('Time (s)'); ylabel('c_s (M)');
+    grid on;
+
+    % Subplot 3: Total coverage vs time
+    subplot(2,2,3);
+    plot(t_grid, sum(s_grid, 2), 'LineWidth', 2);
+    title('Surface Compartment Concentration');
+    xlabel('Time (s)'); ylabel('c_s (M)');
+    grid on;
+    
+    % Subplot 4: Parameter correlation
+    subplot(2,2,4);
+    scatter(kon_grid(:), koff_grid(:), 50, smax_grid(:), 'filled');
+    title('Parameter Correlation');
+    xlabel('k_{on}'); ylabel('k_{off}');
+    colorbar; grid on;
+    
+    % Additional visualization: Random site trajectories
+    figure('Name','Individual Site Dynamics');
+    hold on;
+    site_indices = randperm(gridN^2, 5);  % Randomly select 5 sites
+    for idx = site_indices
+        plot(t_grid, s_grid(:,idx), 'LineWidth', 1.5);
+    end
+    title('Example Site Trajectories');
+    xlabel('Time (s)'); ylabel('Coverage (RU)');
+    legend(arrayfun(@(x) sprintf('Site %d',x), site_indices, 'UniformOutput',false));
+    grid on;
+    
+    % Create grid animation with enhanced features
+    create_grid_gif(t_grid, s_grid, gridN);
+end
+
+% ==================== ENHANCED GRID FUNCTIONS ====================
+function [kon_grid, koff_grid, smax_grid] = generate_grid_parameters(gridN, roughness_scale)
+    % Generate correlated parameters using 2D Gaussian random field
+    [X,Y] = meshgrid(linspace(-1,1,gridN));
+    Z = exp(-(X.^2 + Y.^2)/0.3);  % Gaussian kernel
+    
+    % Create roughness pattern with spatial correlation
+    roughness = imfilter(randn(gridN), Z, 'circular');
+    roughness = roughness/max(abs(roughness(:)));
+    
+    % Generate physically realistic parameters
+    kon_base = 1e6;  % Base association rate (M⁻¹s⁻¹)
+    koff_base = 0.01; % Base dissociation rate (s⁻¹)
+    
+    kon_grid = kon_base * (1 + roughness_scale*roughness);
+    koff_grid = koff_base * (1 - 0.4*roughness_scale*roughness);
+    smax_grid = 1 * (1 + 0.2*roughness_scale*roughness);  % Add smax variation
+    
+    % Ensure physical bounds
+    kon_grid = max(kon_grid, 1e5);
+    koff_grid = max(koff_grid, 1e-4);
+    smax_grid = max(smax_grid, 50);
+end
+
+function [t, c_s, s] = simulate_grid_model(gridN, kon_grid, koff_grid, smax_grid, k_tr, c0)
+    % Flatten grid parameters
+    kon = kon_grid(:);
+    koff = koff_grid(:);
+    smax = smax_grid(:);
+    
+    % Time parameters for smooth animation
+    tspan_assoc = linspace(0, 500, 50); % Association phase
+    tspan_diss = linspace(500, 1000, 50); % Dissociation phase
+    
+    % Solve ODE system
+    y0 = [0; zeros(gridN^2, 1)];
+    [t_assoc, y_assoc] = ode15s(@(t,y) grid_ode_system(t,y,kon,koff,smax,k_tr,c0), tspan_assoc, y0);
+    [t_diss, y_diss] = ode15s(@(t,y) grid_ode_system(t,y,kon,koff,smax,k_tr,0), tspan_diss, y_assoc(end,:)');
+    
+    % Combine results
+    t = [t_assoc; t_diss];
+    y = [y_assoc; y_diss];
+    c_s = y(:,1);
+    s = y(:,2:end) + randn(length(t), 1)*1;
+end
+
+function dydt = grid_ode_system(~, y, kon, koff, smax, k_tr, c0)
+    % Grid ODE system with N² binding sites
+    c_s = y(1);
+    s = y(2:end);
+    dsdt = kon.*c_s.*(smax - s) - koff.*s;
+    sum_dsdt = sum(dsdt);
+    dcsdt = (k_tr*(c0 - c_s) - sum_dsdt)*1e-6;
+    dydt = [dcsdt; dsdt];
+end
+
+function create_grid_gif(t, s, gridN)
+    % Enhanced GIF creation with multiple visualization modes
+    filename = 'surface_coverage.gif';
+    h = figure('Position', [100 100 1200 500], 'Name','Surface Dynamics');
+    
+    for i = 1:length(t)
+        % Reshape to 2D grid
+        coverage = reshape(s(i,:), gridN, gridN);
+        
+        % Subplot 1: Raw coverage
+        subplot(1,1,1);
+        imagesc(coverage);
+        title(sprintf('Time: %.1f s', t(i)));
+        colorbar;
+        caxis([0 100]);
+        colormap(jet);
+        
+        % Capture frame
+        frame = getframe(h);
+        im = frame2im(frame);
+        [imind,cm] = rgb2ind(im,256);
+        
+        % Write to GIF
+        if i == 1
+            imwrite(imind,cm,filename,'gif','LoopCount',inf,'DelayTime',0.1);
+        else
+            imwrite(imind,cm,filename,'gif','WriteMode','append','DelayTime',0.1);
+        end
+    end
+end

@@ -1,10 +1,10 @@
 function transport_limited_adsorption
     clear all;close all;clc;
-    % Parameters from FIGURE 3 description
+    % Parameters 
     N = 2;                          % Number of binding sites
     koff = [1e-3, 0.015];           % Dissociation rates (s^-1)
     KD = [1e-9, 30e-9];             % Equilibrium constants (M)
-    kon = koff ./ KD;                % Calculate association rate constants
+    kon = koff ./ KD;               % Calculate association rate constants
     smax = [100, 100];              % Maximum capacities (RU)
     k_tr = 1e8;                     % Transport rate (RU/M/s)
     c0_values = [1, 3, 10, 30, 100, 200] * 1e-9; % nM -> M
