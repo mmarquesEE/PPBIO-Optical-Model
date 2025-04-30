@@ -56,7 +56,7 @@ function transport_limited_adsorption
     
     % Subplot 4: Parameter correlation
     subplot(2,2,4);
-    scatter(kon_grid(:), koff_grid(:), 50, smax_grid(:), 'filled');
+    scatter(kon_grid(:), koff_grid(:), smax_grid(:), 'filled');
     title('Parameter Correlation');
     xlabel('k_{on}'); ylabel('k_{off}');
     colorbar; grid on;
@@ -93,7 +93,7 @@ function [kon_grid, koff_grid, smax_grid] = generate_grid_parameters(gridN, roug
     
     kon_grid = kon_base * (1 + roughness_scale*roughness);
     koff_grid = koff_base * (1 - 0.4*roughness_scale*roughness);
-    smax_grid = 1 * (1 + 0.2*roughness_scale*roughness);  % Add smax variation
+    smax_grid = 100;% * (1 + 0.2*roughness_scale*roughness);  % Add smax variation
     
     % Ensure physical bounds
     kon_grid = max(kon_grid, 1e5);
