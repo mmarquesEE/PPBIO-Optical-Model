@@ -69,8 +69,8 @@ function [t, c_s, s] = simulate_flow_model(gridN, kon_grid, koff_grid, smax_grid
     y0 = [c_s(:); s(:)];
     
     % Time parameters
-    tspan_assoc = linspace(0, t_assoc, 10*t_assoc);
-    tspan_diss = linspace(t_assoc, t_total, 10*t_assoc);
+    tspan_assoc = linspace(0, t_assoc, t_assoc);
+    tspan_diss = linspace(t_assoc, t_total, t_assoc);
     
     % Solve ODE
     options = odeset('RelTol',1e-5,'AbsTol',1e-8);
