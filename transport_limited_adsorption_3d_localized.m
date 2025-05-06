@@ -13,8 +13,8 @@ function transport_limited_adsorption_3d_localized
     k_flow_vertical = 10;        % Vertical flow rate (rows/s)
     k_flow_depth = 10;           % Depth flow rate (slices/s) 
     ru_to_m = 1e-6;               % RU to molar conversion
-    t_association = 500;          % Association phase duration
-    t_dissociation = 1000;         % Total simulation time
+    t_association = 100;          % Association phase duration
+    t_dissociation = 200;         % Total simulation time
     adsorption_z_layer = 1;       % Adsorption layer (z=1, bottom)
     D_coeff = 1e-3;               % Diffusion coefficient (cell²/s) [ADDED]
 
@@ -25,27 +25,28 @@ function transport_limited_adsorption_3d_localized
     outlet_x = gridN_x;           % Outlet at last column
     outlet_y = [1,1];            % Outlet spans depth y=3 to y=5
     outlet_z = gridN_z;           % Outlet at top layer
-
+    ads_x_range = [3, 8];          % Adsorption region x indices (columns)
+    ads_y_range = [3, 8];          % Adsorption region y indices (depth)
     % ==================== PARAMETER GENERATION ====================
     [kon_grid, koff_grid, smax_grid] = generate_3d_parameters(...
-        gridN_x, gridN_y, gridN_z, roughness_scale);
+    gridN_x, gridN_y, gridN_z, roughness_scale); % Added ads ranges
 
     % ==================== SIMULATION EXECUTION ====================
     [t, c_s, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z,...
         kon_grid, koff_grid, smax_grid, k_flow_horizontal, k_flow_vertical,...
         k_flow_depth, c0, c0_diss, t_association, t_dissociation, ru_to_m,...
-        adsorption_z_layer, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, D_coeff);
+        adsorption_z_layer, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, D_coeff, ads_y_range,ads_x_range);
 
     % ==================== VISUALIZATION ====================
     create_3d_flow_animation(t, c_s, gridN_x, gridN_y, gridN_z, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z); % New 3D animation
-    create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, gridN_y);
+    create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, gridN_y, ads_y_range,ads_x_range);
     create_flow_animation(t, c_s, s, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, gridN_z);
 
 end
 
 %% Parameter Generation
 function [kon_grid, koff_grid, smax_grid] = generate_3d_parameters(...
-    nx, ny, nz, roughness_scale)
+    nx, ny, nz, roughness_scale) % Modified input
     % Create 3D parameter grids with adsorption only at z=0 (bottom layer)
     [X,Y] = meshgrid(linspace(-1,1,nx), linspace(-1,1,ny));
     Z = exp(-(X.^2 + Y.^2)/0.3);
@@ -57,7 +58,6 @@ function [kon_grid, koff_grid, smax_grid] = generate_3d_parameters(...
     % Base parameters
     koff = 1e-3; 
     KD = 1e-9;
-    
     % Initialize 3D grids
     kon_grid = zeros(nx, ny, nz);
     koff_grid = zeros(nx, ny, nz);
@@ -66,13 +66,13 @@ function [kon_grid, koff_grid, smax_grid] = generate_3d_parameters(...
     % Only populate bottom layer (z=0)
     kon_grid(:,:,1) = (koff/KD) * (1 + roughness_scale*roughness);
     koff_grid(:,:,1) = koff * (1 - 0.4*roughness_scale*roughness);
-    smax_grid(:,:,1) = 100;  % RU/site
+    smax_grid(:,:,1) = 1;  % RU/site
 end
 
 %% 3D Flow Simulation (Updated)
 function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     koff_grid, smax_grid, k_flow_h, k_flow_v, k_flow_d, c0_assoc, c0_diss,...
-    t_assoc, t_total, ru_to_m, ads_layer, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, D_coeff)
+    t_assoc, t_total, ru_to_m, ads_layer, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, D_coeff, ads_x_range, ads_y_range)
     
     % Initialize state variables (x,y,z)
     c_s = zeros(nx, ny, nz);
@@ -80,8 +80,8 @@ function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     s = zeros(nx, ny, nz);
     y0 = [c_s(:); s(:)];  % Flatten for ODE solver
     % Time parameters
-    tspan_assoc = linspace(0, t_assoc,t_assoc/10);
-    tspan_diss = linspace(t_assoc, t_total, t_assoc/10);
+    tspan_assoc = linspace(0, t_assoc,t_assoc);
+    tspan_diss = linspace(t_assoc, t_total, t_assoc);
     
     % Solve ODE
     options = odeset('RelTol',1e-5,'AbsTol',1e-8);
@@ -89,12 +89,12 @@ function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     % Association phase
     [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,...
         kon_grid,koff_grid,smax_grid,c0_assoc,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
-        outlet_x,outlet_y,outlet_z, D_coeff), tspan_assoc, y0, options); % [MODIFIED]
+        outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_assoc, y0, options); % [MODIFIED]
     
     % Dissociation phase
     [t_diss, y_diss] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,...
         kon_grid,koff_grid,smax_grid,c0_diss,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
-        outlet_x,outlet_y,outlet_z, D_coeff), tspan_diss, y_assoc(end,:)', options); % [MODIFIED]
+        outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_diss, y_assoc(end,:)', options); % [MODIFIED]
     
     % Combine results
     t = [t_assoc; t_diss];
@@ -107,7 +107,7 @@ end
 
 %% ODE System (Updated for 3D flow)
 function dydt = ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,kon_grid,...
-    koff_grid,smax_grid,c0,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,outlet_x,outlet_y,outlet_z, D_coeff)
+    koff_grid,smax_grid,c0,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range)
     
     % Reshape state variables
     c_s = reshape(y(1:nx*ny*nz), [nx, ny, nz]);
@@ -138,17 +138,16 @@ function dydt = ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,kon_grid,...
     % Localized inlet (x=1, y=1:8, z=top)
     inlet_y_range = inlet_y(1):inlet_y(2);
     dcsdt(inlet_x, inlet_y_range, inlet_z) = dcsdt(inlet_x, inlet_y_range, inlet_z) + ...
-        k_flow_h*(c0 - c_s(inlet_x, inlet_y_range, inlet_z));
+        k_flow_h *(c0 - c_s(inlet_x, inlet_y_range, inlet_z));
     
     % Localized outlet (x=end, y=1:8, z=1) [CORRECTED TO HORIZONTAL FLOW]
     outlet_y_range = outlet_y(1):outlet_y(2);
     dcsdt(outlet_x, outlet_y_range, outlet_z) = dcsdt(outlet_x, outlet_y_range, outlet_z) - ...
-        k_flow_h * c_s(outlet_x, outlet_y_range, outlet_z);
+        k_flow_h  * c_s(outlet_x, outlet_y_range, outlet_z);
     
     % ==================== ADSORPTION KINETICS ====================
     ads_mask = zeros(nx,ny,nz);
-    ads_mask(:,:,ads_layer) = 1;  % Only at z=ads_layer
-    
+    ads_mask(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2),ads_layer) = 1;  % Only at z=ads_layer
     active_kon = kon_grid .* ads_mask;
     active_koff = koff_grid .* ads_mask;
     active_smax = smax_grid .* ads_mask;
@@ -208,7 +207,7 @@ function create_flow_animation(t, c_s, s, inlet_x, inlet_y, inlet_z, outlet_x, o
 end
 
 %% Visualization Functions for 3D System
-function create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, gridN_y)
+function create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, gridN_y, ads_y_range,ads_x_range)
     % Creates analysis figures for 3D flow model
     figure('Name','3D System Analysis','Position',[100 100 1200 400])
     
@@ -243,7 +242,12 @@ function create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, grid
     subplot(1,4,3)
     % Sum over all x,y positions in surface layer (z=0)
     total_coverage = sum(s(:,:,:,1), [2 3]);  
-    plot(t, total_coverage, 'LineWidth',2)
+    % Calculate total_smax for normalization
+    num_ads_x = ads_x_range(2) - ads_x_range(1) + 1;
+    num_ads_y = ads_y_range(2) - ads_y_range(1) + 1;
+    total_ads_sites = num_ads_x * num_ads_y;
+    total_smax = total_ads_sites * 1; % Each site has smax 100
+    plot(t, total_coverage/total_smax, 'LineWidth',2)
     title('Total Surface Coverage')
     xlabel('Time (s)'), ylabel('Total RU (z=0 plane)')
 
