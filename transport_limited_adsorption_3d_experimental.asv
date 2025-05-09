@@ -5,7 +5,7 @@ function transport_limited_adsorption_3d_experimental
     % ==================== SIMULATION PARAMETERS ====================
     gridN_x = 11;                  % Length dimension (11 mm)
     gridN_y = 17;                  % Depth dimension (1.7 mm)
-    gridN_z = 3;                   % Height dimension (0.3 mm)
+    gridN_z = 10;                   % Height dimension (0.3 mm)
     roughness_scale = 0;           % No surface roughness
     c0 = 3.3e-6;                  % Inlet concentration (0.21 μM)
     c0_diss = 0;                   % Dissociation phase concentration
@@ -16,25 +16,37 @@ function transport_limited_adsorption_3d_experimental
     t_association = 500;           % Association phase duration
     t_dissociation = 800;          % Total simulation time
     adsorption_z_layer = 1;        % Adsorption layer (z=1, bottom)
-    D_coeff = 6e-5;                % Diffusion coefficient (mm²/s)
+    D_coeff = 6e-3;                % Diffusion coefficient (mm²/s)
 
     % Localized inlet/outlet positions
     inlet_x = 1;                   % Inlet at first column
     inlet_y = [1, 17];             % Inlet spans entire depth
-    inlet_z = [1, 3];              % Inlet spans all layers
+    inlet_z = [1, 10];              % Inlet spans all layers
     outlet_x = 11;                 % Outlet at last column
     outlet_y = [1, 17];            % Outlet spans entire depth
-    outlet_z = [1, 3];             % Outlet spans all layers
+    outlet_z = [1, 10];             % Outlet spans all layers
     ads_x_range = [6,6];          % Adsorption region x indices (center)
     ads_y_range = [9,9];         % Adsorption region y indices (1 mm width)
 
+    h = 0.3; % Physical height (gridN_z layers span 0 to h)
+
+    % Generate parabolic velocity profile
+    z_indices = linspace(0, h, gridN_z); % Physical z from 0 to h (MATLAB indices 1:gridN_z)
+    velocity_profile = 4 * k_flow_horizontal * (z_indices/h) .* (1 - z_indices/h);
+    velocity_profile = reshape(velocity_profile, [1, 1, gridN_z]); % Shape for 3D operations
+    figure;
+    plot(z_indices, squeeze(velocity_profile), 'LineWidth', 2);
+    xlabel('Vertical Position (z)');
+    ylabel('Horizontal Velocity (mm/s)');
+    title('Parabolic Velocity Profile');
+    grid on;
     % ==================== PARAMETER GENERATION ====================
     [kon_grid, koff_grid, smax_grid] = generate_3d_parameters(...
         gridN_x, gridN_y, gridN_z, roughness_scale);
 
     % ==================== SIMULATION EXECUTION ====================
     [t, c_s, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z,...
-        kon_grid, koff_grid, smax_grid, k_flow_horizontal, k_flow_vertical,...
+        kon_grid, koff_grid, smax_grid, velocity_profile, k_flow_vertical,...
         k_flow_depth, c0, c0_diss, t_association, t_dissociation, ru_to_m,...
         adsorption_z_layer, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, D_coeff, ads_x_range,ads_y_range);
 
@@ -71,46 +83,53 @@ function [kon_grid, koff_grid, smax_grid] = generate_3d_parameters(...
     smax_grid(:,:,1) = smax;
 end
 
-%% 3D Flow Simulation
+%% 3D Flow Simulation (Modified to use velocity_profile)
 function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
-    koff_grid, smax_grid, k_flow_h, k_flow_v, k_flow_d, c0_assoc, c0_diss,...
+    koff_grid, smax_grid, velocity_profile, k_flow_v, k_flow_d, c0_assoc, c0_diss,...
     t_assoc, t_total, ru_to_m, ads_layer, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, D_coeff, ads_x_range, ads_y_range)
     
-    % Initialize state variables (x,y,z)
+    % Initialize state variables
     c_s = zeros(nx, ny, nz);
     c_s(inlet_x, inlet_y(1):inlet_y(2), inlet_z(1):inlet_z(2)) = c0_assoc;
     s = zeros(nx, ny, nz);
-    y0 = [c_s(:); s(:)];  % Flatten for ODE solver
-    
-    % Time parameters
-    tspan_assoc = linspace(0, t_assoc, t_assoc*10);
-    tspan_diss = linspace(t_assoc, t_total, t_assoc*10);
-    
-    % Solve ODE
-    options = odeset('RelTol',1e-5,'AbsTol',1e-8);
+    y0 = [c_s(:); s(:)];  
 
-    % Association phase
-    [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,...
+    % Time parameters
+    tspan_assoc = linspace(0, t_assoc, t_assoc/10);
+    tspan_diss = linspace(t_assoc, t_total, t_assoc/10);
+    
+    % Solve ODE with velocity_profile
+    options = odeset('RelTol',1e-5,'AbsTol',1e-8);
+    [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,velocity_profile,k_flow_v,k_flow_d,...
         kon_grid,koff_grid,smax_grid,c0_assoc,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
         outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_assoc, y0, options);
     
-    % Dissociation phase
-    [t_diss, y_diss] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,...
+    % ===== RESET INLET CONCENTRATION FOR DISSOCIATION =====
+    % Extract final state from association
+    y_end_assoc = y_assoc(end,:)';
+    c_s_end = reshape(y_end_assoc(1:nx*ny*nz), [nx, ny, nz]);
+    s_end = reshape(y_end_assoc(nx*ny*nz+1:end), [nx, ny, nz]);
+
+    % Set inlet concentration to c0_diss (0)
+    c_s_end(inlet_x, inlet_y(1):inlet_y(2), inlet_z(1):inlet_z(2)) = c0_diss;
+    y0_diss = [c_s_end(:); s_end(:)];  % New initial condition
+
+    [t_diss, y_diss] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,velocity_profile,k_flow_v,k_flow_d,...
         kon_grid,koff_grid,smax_grid,c0_diss,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
-        outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_diss, y_assoc(end,:)', options);
+        outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_diss, y0_diss', options);
     
     % Combine results
     t = [t_assoc; t_diss];
     y = [y_assoc; y_diss];
     
-    % Reshape results
     c_s = reshape(y(:,1:nx*ny*nz), [length(t), nx, ny, nz]);
     s = reshape(y(:,nx*ny*nz+1:end), [length(t), nx, ny, nz]);
 end
 
-%% ODE System
-function dydt = ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,kon_grid,...
-    koff_grid,smax_grid,c0,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range)
+%% ODE System (Updated)
+function dydt = ode_system(t,y,nx,ny,nz,velocity_profile,~,~,kon_grid,...
+    koff_grid,smax_grid,c0,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
+    outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range)
     
     % Reshape state variables
     c_s = reshape(y(1:nx*ny*nz), [nx, ny, nz]);
@@ -118,38 +137,45 @@ function dydt = ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,kon_grid,...
     dcsdt = zeros(nx, ny, nz);
     dsdt = zeros(nx, ny, nz);
     
-    % ==================== 3D FLOW TRANSPORT ====================
-    % Horizontal (x-direction)
-    dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + k_flow_h*(c_s(1:end-1,:,:) - c_s(2:end,:,:));
+    % ==================== DIFFUSION (x and z only) ====================
+    % Second derivative in x
+    d2c_dx2 = zeros(nx, ny, nz);
+    d2c_dx2(2:end-1,:,:) = c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:);
     
-    % ==================== DIFFUSION ====================
-    laplacian = 6 * del2(c_s);
-    dcsdt = dcsdt + D_coeff * laplacian;
+    % Second derivative in z (with no-flux BCs: ∂C/∂z=0 at z=0 and z=h)
+    d2c_dz2 = zeros(nx, ny, nz);
+    d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
+    
+    % No-flux at z=0 (mirror layer 2)
+    d2c_dz2(:,:,1) = c_s(:,:,2) - 2*c_s(:,:,1) + c_s(:,:,1);
+    % No-flux at z=h (mirror layer end-1)
+    d2c_dz2(:,:,end) = c_s(:,:,end-1) - 2*c_s(:,:,end) + c_s(:,:,end-1);
+    
+    % Total diffusion
+    dcsdt = D_coeff * (d2c_dx2 + d2c_dz2) + dcsdt;
+    
+    % ==================== ADVECTION (x-direction, parabolic profile) ====================
+    for iz = 1:nz
+        % Upwind scheme for ∂(v(z)C)/∂x
+        dcsdt(2:end,:,iz) = dcsdt(2:end,:,iz) + ...
+            velocity_profile(1,1,iz) .* (c_s(1:end-1,:,iz) - c_s(2:end,:,iz));
+    end
     
     % ==================== BOUNDARY CONDITIONS ====================
-    % Inlet (x=1, all y, all z)
+    % Inlet (Dirichlet: C(t,0,z) = c0)
     inlet_y_range = inlet_y(1):inlet_y(2);
     inlet_z_range = inlet_z(1):inlet_z(2);
-    dcsdt(inlet_x, inlet_y_range, inlet_z_range) = dcsdt(inlet_x, inlet_y_range, inlet_z_range) + ...
-        k_flow_h * (c0 - c_s(inlet_x, inlet_y_range, inlet_z_range));
     
-    % Outlet (x=end, all y, all z)
-    outlet_y_range = outlet_y(1):outlet_y(2);
-    outlet_z_range = outlet_z(1):outlet_z(2);
-    dcsdt(outlet_x, outlet_y_range, outlet_z_range) = dcsdt(outlet_x, outlet_y_range, outlet_z_range) - ...
-        k_flow_h * c_s(outlet_x, outlet_y_range, outlet_z_range);
+    % Enforce fixed concentration at inlet
+    dcsdt(inlet_x, inlet_y_range, inlet_z_range) = 0;  % No change over time
+    c_s(inlet_x, inlet_y_range, inlet_z_range) = c0;    % Override concentration
+    
+    % Outlet (Neumann: ∂C/∂x = 0 at x=l)
+    dcsdt(outlet_x, :, :) = 0;  % No change in concentration at outlet
     
     % ==================== ADSORPTION KINETICS ====================
-    ads_mask = zeros(nx, ny, nz); % x, y, z order
-    ads_mask(...
-        ads_x_range(1):ads_x_range(2),... % x indices
-        ads_y_range(1):ads_y_range(2),... % y indices
-        ads_layer...                       % z index
-    ) = 1;
-    
-    % Verify grid sizes match
-    assert(isequal(size(kon_grid), size(ads_mask)),...
-        'Parameter grid and mask dimension mismatch');
+    ads_mask = zeros(nx, ny, nz);
+    ads_mask(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = 1;
     
     active_kon = kon_grid .* ads_mask;
     active_koff = koff_grid .* ads_mask;
@@ -158,9 +184,9 @@ function dydt = ode_system(t,y,nx,ny,nz,k_flow_h,k_flow_v,k_flow_d,kon_grid,...
     dsdt = active_kon .* c_s .* (active_smax - s) - active_koff .* s;
     dcsdt = dcsdt - (dsdt * ru_to_m);
     
-    % Flatten derivatives
     dydt = [dcsdt(:); dsdt(:)];
 end
+
 
 %% Visualization (Updated)
 function create_flow_animation(t, c_s, s, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, gridN_z)
