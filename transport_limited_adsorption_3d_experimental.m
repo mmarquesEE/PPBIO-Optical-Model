@@ -1,15 +1,15 @@
 function transport_limited_adsorption_3d_experimental
     % Main function for experimental 3D flow-driven adsorption
     clear all; close all; clc;
-
+    % ==================== MOLECULE PARAMETERS ====================
     % ==================== SIMULATION PARAMETERS ====================
-    gridN_x = 11;                  % Length dimension (11 mm)
-    gridN_y = 17;                  % Depth dimension (1.7 mm)
+    gridN_x = 55;                  % Length dimension (11 mm)
+    gridN_y = 9;                  % Depth dimension (1.7 mm)
     gridN_z = 3;                   % Height dimension (0.3 mm)
     roughness_scale = 0;           % No surface roughness
     c0 = 3.3e-6;                  % Inlet concentration (0.21 μM)
     c0_diss = 0;                   % Dissociation phase concentration
-    k_flow_horizontal = 0.83;       % Horizontal flow rate (mm/s)
+    k_flow_horizontal = 8.3;       % Horizontal flow rate (mm/s)
     k_flow_vertical = 0;           % No vertical flow
     k_flow_depth = 0;              % No depth flow
     ru_to_m = 1e-6;                % RU to molar conversion
@@ -25,8 +25,8 @@ function transport_limited_adsorption_3d_experimental
     outlet_x = gridN_x;                 % Outlet at last column
     outlet_y = [1, gridN_y];            % Outlet spans entire depth
     outlet_z = [1, gridN_z];             % Outlet spans all layers
-    ads_x_range = [6,6];          % Adsorption region x indices (center)
-    ads_y_range = [9,9];         % Adsorption region y indices (1 mm width)
+    ads_x_range = [round(gridN_x/2)-1,round(gridN_x/2)-1];          % Adsorption region x indices (center)
+    ads_y_range = [round(gridN_y/2)-1,round(gridN_y/2)-1];         % Adsorption region y indices (1 mm width)
     
     h = gridN_z - 1; % Physical height (gridN_z layers span 0 to h)
 
@@ -43,7 +43,7 @@ function transport_limited_adsorption_3d_experimental
     % ==================== PARAMETER GENERATION ====================
     [kon_grid, koff_grid, smax_grid] = generate_3d_parameters(...
         gridN_x, gridN_y, gridN_z, roughness_scale);
-
+    
     % ==================== SIMULATION EXECUTION ====================
     [t, c_s, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z,...
         kon_grid, koff_grid, smax_grid, velocity_profile, k_flow_vertical,...
@@ -155,11 +155,6 @@ function dydt = ode_system(t,y,nx,ny,nz,velocity_profile,~,~,kon_grid,...
     dcsdt = D_coeff * (d2c_dx2 + d2c_dz2) + dcsdt;
     
     % ==================== ADVECTION (x-direction, parabolic profile) ====================
-%     for iz = 1:nz
-%         % Upwind scheme for ∂(v(z)C)/∂x
-%         dcsdt(2:end,:,iz) = dcsdt(2:end,:,iz) + ...
-%             velocity_profile(1,1,iz) .* (c_s(1:end-1,:,iz) - c_s(2:end,:,iz));
-%     end
     dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + ...
         bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
     
@@ -245,15 +240,15 @@ function create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, grid
     figure('Name','3D System Analysis','Position',[100 100 1200 400])
     
     % ==================== Coverage Dynamics ====================
-    subplot(1,4,1)
-    hold on
-    x_positions = round(linspace(1, gridN_x));
-    % Plot coverage at different x positions at mid-depth
-    for x = x_positions
-        plot(t, s(:, :, x), 'LineWidth', 2)
-    end
-    title('Coverage Dynamics')
-    xlabel('Time (s)'), ylabel('Coverage (RU)')
+%     subplot(1,4,1)
+%     hold on
+%     x_positions = round(linspace(1, gridN_x));
+%     % Plot coverage at different x positions at mid-depth
+%     for x = x_positions
+%         plot(t, s(:, :, x), 'LineWidth', 2)
+%     end
+%     title('Coverage Dynamics')
+%     xlabel('Time (s)'), ylabel('Coverage (RU)')
     
     % ==================== Parameter Correlations ====================
     subplot(1,4,2)
