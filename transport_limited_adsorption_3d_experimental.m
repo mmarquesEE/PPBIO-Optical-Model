@@ -239,19 +239,8 @@ function create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, grid
     % Creates analysis figures for 3D flow model
     figure('Name','3D System Analysis','Position',[100 100 1200 400])
     
-    % ==================== Coverage Dynamics ====================
-%     subplot(1,4,1)
-%     hold on
-%     x_positions = round(linspace(1, gridN_x));
-%     % Plot coverage at different x positions at mid-depth
-%     for x = x_positions
-%         plot(t, s(:, :, x), 'LineWidth', 2)
-%     end
-%     title('Coverage Dynamics')
-%     xlabel('Time (s)'), ylabel('Coverage (RU)')
-    
     % ==================== Parameter Correlations ====================
-    subplot(1,4,2)
+    subplot(1,3,1)
     % Extract surface parameters (z=0 layer)
     surface_kon = kon_grid(:,:,1);
     surface_koff = koff_grid(:,:,1);
@@ -263,7 +252,7 @@ function create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, grid
     grid on
     
     % ==================== Total Coverage ====================
-    subplot(1,4,3)
+    subplot(1,3,2)
     % Sum over all x,y positions in surface layer (z=0)
     total_coverage = sum(s(:,:,:,1), [2 3]);  
     % Calculate total_smax for normalization
@@ -276,7 +265,7 @@ function create_main_figures(t, s, kon_grid, koff_grid, smax_grid, gridN_x, grid
     xlabel('Time (s)'), ylabel('Total RU (z=0 plane)')
 
     % Final surface coverage (x-y plane at z=1)
-    subplot(1,4,4)
+    subplot(1,3,3)
     [X,Y] = meshgrid(1:gridN_x, 1:gridN_y);
     % Proper dimensions: [nx, ny] data with [ny, nx] grid requires transpose
     surf(X', Y', squeeze(s(end,:,:,1)))

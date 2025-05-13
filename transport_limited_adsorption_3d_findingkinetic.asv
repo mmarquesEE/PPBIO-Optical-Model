@@ -1,0 +1,278 @@
+function heterogenous_binding_analysis()
+    % Main function for analyzing heterogeneous binding parameters
+    clearvars; close all; clc;
+    
+    % ================ SIMULATION PARAMETERS ================
+    % Shared parameters between forward model and inversion
+    gridN_x = 25;          % Reduced grid for faster testing
+    gridN_y = 5;
+    gridN_z = 3;
+    ads_layer = 1;         % Adsorption layer (z=1)
+    ads_x_range = [10,15]; % Central adsorption region
+    ads_y_range = [2,4];
+    c0_assoc = 3.3e-6;     % Association phase concentration
+    c0_diss = 0;           % Dissociation phase concentration
+    t_association = 100;   % Reduced time for testing
+    t_dissociation = 400;
+    D_coeff = 6e-3;        % Diffusion coefficient
+    ru_to_m = 1e-6;        % RU conversion factor
+    
+    % Flow parameters
+    velocity_profile = create_velocity_profile(gridN_z, 8.3);
+    
+    % ================ PARAMETER GRID SETUP ================
+    kon_values = logspace(-1, 3, 5);  % Coarse grid for demonstration
+    koff_values = logspace(-3, 0, 5);
+    [KON, KOFF] = meshgrid(kon_values, koff_values);
+    param_pairs = [KON(:), KOFF(:)];
+    
+    % ================ KERNEL MATRIX CONSTRUCTION ================
+    fprintf('Building kernel matrix...\n');
+    [A,t] = construct_kernel_numerical(param_pairs, gridN_x, gridN_y, gridN_z,...
+        ads_x_range, ads_y_range, ads_layer, velocity_profile,...
+        c0_assoc, c0_diss, t_association, t_dissociation, D_coeff, ru_to_m);
+    
+    % ================ SYNTHETIC DATA GENERATION ================
+    % (Replace this with real data from your simulation)
+    % Choose indices within the grid
+    true_kon_idx = [4, 3];  % 100 and 10 in kon_values
+    true_koff_idx = [3, 4]; % 0.1 and 1 in koff_values
+    true_params = [kon_values(true_kon_idx(1)), koff_values(true_koff_idx(1));
+                   kon_values(true_kon_idx(2)), koff_values(true_koff_idx(2))];
+    weights = [0.7; 0.3];
+    s_obs = generate_synthetic_data(A, true_params, weights, param_pairs);
+    
+    % ================ REGULARIZED INVERSION ================
+    fprintf('Solving inverse problem...\n');
+    lambda = 1e-2;  % Regularization parameter
+    [P_grid, kon_grid, koff_grid,s_fit] = solve_inverse_problem(...
+        s_obs, param_pairs, kon_values, koff_values, A, lambda);
+    t
+    % ================ VISUALIZATION ================
+    plot_results(kon_grid, koff_grid, P_grid, true_params, weights,t, s_obs, s_fit);
+   
+end
+
+%% Helper Functions
+function velocity_profile = create_velocity_profile(nz, max_velocity)
+    z_indices = 0:(nz - 1);
+    h = nz - 1;
+    velocity_profile = 4 * max_velocity * (z_indices/h) .* (1 - z_indices/h);
+    velocity_profile = reshape(velocity_profile, [1, 1, nz]);
+end
+%% 3D Flow Simulation (Modified to use velocity_profile)
+function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
+    koff_grid, smax_grid, velocity_profile, k_flow_v, k_flow_d, c0_assoc, c0_diss,...
+    t_assoc, t_total, ru_to_m, ads_layer, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, D_coeff, ads_x_range, ads_y_range)
+    
+    % Initialize state variables
+    c_s = zeros(nx, ny, nz);
+    c_s(inlet_x, inlet_y(1):inlet_y(2), inlet_z(1):inlet_z(2)) = c0_assoc;
+    s = zeros(nx, ny, nz);
+    y0 = [c_s(:); s(:)];  
+
+    % Time parameters
+    tspan_assoc = linspace(0, t_assoc, t_assoc/10);
+    tspan_diss = linspace(t_assoc, t_total, t_assoc/10);
+    
+    % Solve ODE with velocity_profile
+    options = odeset('RelTol',1e-4,'AbsTol',1e-6);
+    [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,velocity_profile,k_flow_v,k_flow_d,...
+        kon_grid,koff_grid,smax_grid,c0_assoc,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
+        outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_assoc, y0, options);
+    
+    % ===== RESET INLET CONCENTRATION FOR DISSOCIATION =====
+    % Extract final state from association
+    y_end_assoc = y_assoc(end,:)';
+    c_s_end = reshape(y_end_assoc(1:nx*ny*nz), [nx, ny, nz]);
+    s_end = reshape(y_end_assoc(nx*ny*nz+1:end), [nx, ny, nz]);
+
+    % Set inlet concentration to c0_diss (0)
+    c_s_end(inlet_x, inlet_y(1):inlet_y(2), inlet_z(1):inlet_z(2)) = c0_diss;
+    y0_diss = [c_s_end(:); s_end(:)];  % New initial condition
+
+    [t_diss, y_diss] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,velocity_profile,k_flow_v,k_flow_d,...
+        kon_grid,koff_grid,smax_grid,c0_diss,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
+        outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_diss, y0_diss', options);
+    
+    % Combine results
+    t = [t_assoc; t_diss(2:end)]; % Exclude first point of dissociation phase
+    y = [y_assoc; y_diss(2:end,:)];
+    
+    c_s = reshape(y(:,1:nx*ny*nz), [length(t), nx, ny, nz]);
+    s = reshape(y(:,nx*ny*nz+1:end), [length(t), nx, ny, nz]);
+end
+
+%% ODE System (Updated)
+function dydt = ode_system(t,y,nx,ny,nz,velocity_profile,~,~,kon_grid,...
+    koff_grid,smax_grid,c0,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
+    outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range)
+    
+    % Reshape state variables
+    c_s = reshape(y(1:nx*ny*nz), [nx, ny, nz]);
+    s = reshape(y(nx*ny*nz+1:end), [nx, ny, nz]);
+    dcsdt = zeros(nx, ny, nz);
+    dsdt = zeros(nx, ny, nz);
+    
+    % ==================== DIFFUSION (x and z only) ====================
+    % Second derivative in x
+    d2c_dx2 = zeros(nx, ny, nz);
+    d2c_dx2(2:end-1,:,:) = c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:);
+    
+    % Second derivative in z (with no-flux BCs: ∂C/∂z=0 at z=0 and z=h)
+    d2c_dz2 = zeros(nx, ny, nz);
+    d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
+    
+    % No-flux at z=0 (mirror layer 2)
+    d2c_dz2(:,:,1) = c_s(:,:,2) - 2*c_s(:,:,1) + c_s(:,:,1);
+    % No-flux at z=h (mirror layer end-1)
+    d2c_dz2(:,:,end) = c_s(:,:,end-1) - 2*c_s(:,:,end) + c_s(:,:,end-1);
+    
+    % Total diffusion
+    dcsdt = D_coeff * (d2c_dx2 + d2c_dz2) + dcsdt;
+    
+    % ==================== ADVECTION (x-direction, parabolic profile) ====================
+    dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + ...
+        bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
+    
+    % ==================== BOUNDARY CONDITIONS ====================
+    % Inlet (Dirichlet: C(t,0,z) = c0)
+    inlet_y_range = inlet_y(1):inlet_y(2);
+    inlet_z_range = inlet_z(1):inlet_z(2);
+    
+    % Enforce fixed concentration at inlet
+    dcsdt(inlet_x, inlet_y_range, inlet_z_range) = 0;  % No change over time
+    c_s(inlet_x, inlet_y_range, inlet_z_range) = c0;    % Override concentration
+    
+    % Outlet (Neumann: ∂C/∂x = 0 at x=l)
+    dcsdt(outlet_x, :, :) = 0;  % No change in concentration at outlet
+    
+    % ==================== ADSORPTION KINETICS ====================
+    ads_mask = zeros(nx, ny, nz);
+    ads_mask(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = 1;
+    
+    active_kon = kon_grid .* ads_mask;
+    active_koff = koff_grid .* ads_mask;
+    active_smax = smax_grid .* ads_mask;
+    
+    dsdt = active_kon .* c_s .* (active_smax - s) - active_koff .* s;
+    dcsdt = dcsdt - (dsdt * ru_to_m);
+    
+    dydt = [dcsdt(:); dsdt(:)];
+end
+function [A,t] = construct_kernel_numerical(param_pairs, nx, ny, nz,...
+    ads_x_range, ads_y_range, ads_layer, velocity_profile,...
+    c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m)
+    
+    N_t = length(linspace(0, t_assoc, t_assoc/10)) + ...
+          length(linspace(t_assoc, t_total, t_assoc/10)) - 1;
+    A = zeros(N_t, size(param_pairs, 1));
+    t = zeros(N_t);
+    parfor i = 1:size(param_pairs, 1)  % Parallel loop for speed
+        kon = param_pairs(i, 1);
+        koff = param_pairs(i, 2);
+        
+        % Generate parameter grids
+        [kon_grid, koff_grid, smax_grid] = generate_param_grids(...
+            nx, ny, nz, kon, koff, ads_x_range, ads_y_range, ads_layer);
+        
+        % Run simulation
+        [time, ~, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
+            koff_grid, smax_grid, velocity_profile, 0, 0, c0_assoc,...
+            c0_diss, t_assoc, t_total, ru_to_m, ads_layer, 1, [1,ny],...
+            [1,nz], nx, [1,ny], [1,nz], D_coeff, ads_x_range, ads_y_range);
+        % Extract signal from adsorption region
+        signal = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
+            ads_y_range(1):ads_y_range(2), ads_layer), [2,3,4]));
+        A(:, i) = signal;         t = time;
+
+    end
+end
+
+function [kon_grid, koff_grid, smax_grid] = generate_param_grids(...
+    nx, ny, nz, kon_val, koff_val, ads_x_range, ads_y_range, ads_layer)
+    
+    kon_grid = zeros(nx, ny, nz);
+    koff_grid = zeros(nx, ny, nz);
+    smax_grid = zeros(nx, ny, nz);
+    
+    x_idx = ads_x_range(1):ads_x_range(2);
+    y_idx = ads_y_range(1):ads_y_range(2);
+    
+    kon_grid(x_idx, y_idx, ads_layer) = kon_val;
+    koff_grid(x_idx, y_idx, ads_layer) = koff_val;
+    smax_grid(x_idx, y_idx, ads_layer) = 1;
+end
+
+function s_obs = generate_synthetic_data(A, true_params, weights, param_pairs)
+    % Find indices of true parameters in parameter grid
+    [~, idx1] = ismember(true_params(1,:), param_pairs, 'rows');
+    [~, idx2] = ismember(true_params(2,:), param_pairs, 'rows');
+    % Create synthetic observation
+    s_obs = A(:, idx1)*weights(1) + A(:, idx2)*weights(2);
+    
+    % Add noise
+    noise_level = 0.02;
+    s_obs = s_obs + noise_level*max(s_obs)*randn(size(s_obs));
+end
+
+function [P_grid, kon_grid, koff_grid, s_fit] = solve_inverse_problem(...
+    s_obs, param_pairs, kon_vals, koff_vals, A, lambda)
+    
+    % Build regularization matrix
+    n_kon = length(kon_vals);
+    n_koff = length(koff_vals);
+    D = construct_regularization_matrix(n_kon, n_koff);
+    
+    % Solve regularized NNLS
+    A_aug = [A; sqrt(lambda)*D];
+    b_aug = [s_obs; zeros(size(D,1),1)];
+    p = lsqnonneg(A_aug, b_aug);
+    
+    % Reshape to grid
+    P_grid = reshape(p, n_kon, n_koff)';
+    [kon_grid, koff_grid] = meshgrid(kon_vals, koff_vals);
+    s_fit = A * p;
+
+end
+
+function D = construct_regularization_matrix(n_kon, n_koff)
+    % Second difference matrices
+    T_kon = spdiags([ones(n_kon,1) -2*ones(n_kon,1) ones(n_kon,1)], -1:1, n_kon, n_kon);
+    T_koff = spdiags([ones(n_koff,1) -2*ones(n_koff,1) ones(n_koff,1)], -1:1, n_koff, n_koff);
+    
+    % Kronecker sum regularization
+    D = kron(speye(n_koff), T_kon) + kron(T_koff, speye(n_kon));
+end
+
+function plot_results(kon_grid, koff_grid, P_grid, true_params, weights,t, s_obs, s_fit)
+    % Create contour plot
+    figure;
+    contourf(log10(kon_grid), log10(koff_grid), P_grid, 20, 'LineColor', 'none');
+    colormap(jet);
+    colorbar;
+    xlabel('log(k_{on})');
+    ylabel('log(k_{off})');
+    title('Recovered Parameter Distribution');
+    
+    % Plot true parameters
+    hold on;
+    scatter(log10(true_params(:,1)), log10(true_params(:,2)), 200, weights, 'filled',...
+        'MarkerEdgeColor', 'k', 'LineWidth', 1.5);
+    hold off;
+   % Subplot 2: Sensorgram comparison
+    figure
+    plot(t, s_obs, 'o', 'MarkerSize', 4, 'DisplayName', 'Observed Data')
+    hold on
+    plot(t, s_fit, 'LineWidth', 2, 'DisplayName', 'Model Fit')
+    
+    % Formatting
+    xlabel('Time (s)')
+    ylabel('Response (RU)')
+    title('Sensorgram Comparison')
+    legend('Location', 'best')
+    grid on
+    set(gca, 'FontSize', 10)
+    
+  
+end
