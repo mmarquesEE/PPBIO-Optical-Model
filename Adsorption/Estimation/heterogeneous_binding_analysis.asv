@@ -1,73 +1,93 @@
 function heterogeneous_binding_analysis()
+    % Main function for analyzing heterogeneous binding parameters
     clearvars; close all; clc;
     
     % ================ SIMULATION PARAMETERS ================
-    gridN_x = 25; ads_x_range = [10,15]; % Adsorption region
-    gridN_y = 5;  ads_y_range = [2,4];
-    gridN_z = 3;  ads_layer = 1;
-    c0_assoc = 3.3e-6; t_association = 500;
-    c0_diss = 0; t_dissociation = 700;
-    D_coeff = 6e-3; ru_to_m = 1e-6;
+    gridN_x = 25;          % Reduced grid for faster testing
+    gridN_y = 5;
+    gridN_z = 3;
+    ads_layer = 1;         % Adsorption layer (z=1)
+    ads_x_range = [10,15]; % Central adsorption region (6 cells)
+    ads_y_range = [2,4];   % 3 cells in y-direction
+    c0_assoc = 3.3e-6;     % Association phase concentration
+    c0_diss = 0;           % Dissociation phase concentration
+    t_association = 1300;   % Reduced time for testing
+    t_dissociation = 1700;
+    D_coeff = 6e-3;        % Diffusion coefficient
+    ru_to_m = 1e-6;        % RU conversion factor
     
-    % ================ GROUND TRUTH PARAMETERS ================
-    [true_kon_grid, true_koff_grid] = create_ground_truth_pattern(...
-        ads_x_range, ads_y_range);
+    % Flow parameters
+    velocity_profile = create_velocity_profile(gridN_z, 8.3);
+    
+    % ================ HETEROGENEOUS PARAMETER SETUP ================
+    % Define adsorption region grid cells
+    ads_x_cells = ads_x_range(1):ads_x_range(2);  % 10-15 (6 cells)
+    ads_y_cells = ads_y_range(1):ads_y_range(2);   % 2-4 (3 cells)
+    num_ads_cells = length(ads_x_cells) * length(ads_y_cells);
     
     % ================ SYNTHETIC DATA GENERATION ================
-    velocity_profile = create_velocity_profile(gridN_z, 8.3);
-    [kon_grid, koff_grid, smax_grid] = generate_param_grids(...
-        gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
-        true_kon_grid, true_koff_grid);
+    fprintf('Generating synthetic data...\n');
     
+    % Create random ground truth kon values (log-spaced between 1e-1 and 1e4)
+    rng(1);  % For reproducibility
+    true_kon = 10.^(rand(num_ads_cells,1)*2 - 1);  % 1e-1 to 1e4
+    true_kon_grid = reshape(true_kon, length(ads_x_cells), length(ads_y_cells)); % 6×3
+    % Create parameter grids
+    [kon_grid, koff_grid, smax_grid] = generate_hetero_param_grids(...
+        gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer, true_kon_grid);
+    
+    % Run forward simulation
     [t, ~, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_grid,...
         koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss,...
         t_association, t_dissociation, D_coeff, ru_to_m);
     
+    % Extract and noise the signal
     s_obs = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
         ads_y_range(1):ads_y_range(2), ads_layer), [2,3,4]));
-    s_obs = s_obs + 0.02*max(s_obs)*randn(size(s_obs));
-
+    noise_level = 0.02;
+    s_obs = s_obs + noise_level*max(s_obs)*randn(size(s_obs));
+    
     % ================ INVERSION SETUP ================
-    num_ads_x = length(ads_x_range(1):ads_x_range(2));
-    num_ads_y = length(ads_y_range(1):ads_y_range(2));
-    num_params = 2 * num_ads_x * num_ads_y; % kon + koff per cell
+    fprintf('Setting up inverse problem...\n');
     
-    % Initial guess: [log10(kon_values); log10(koff_values)]
-    p0 = [log10(1e2*ones(num_ads_x*num_ads_y,1)); 
-          log10(1e-2*ones(num_ads_x*num_ads_y,1))];
+    % Use log-transformed parameters with proper scaling
+    p0 = log10(true_kon_grid(:)) + 0.1*randn(num_ads_cells,1);  % Perturbed initial guess
+    lb = log10(1e-2 * ones(num_ads_cells,1));  % Wider lower bound
+    ub = log10(1e5 * ones(num_ads_cells,1));   % Extended upper bound
     
-    % Bounds: kon (1e-1-1e4), koff (1e-4-1e1)
-    lb = [log10(1e-1*ones(num_ads_x*num_ads_y,1)); 
-          log10(1e-4*ones(num_ads_x*num_ads_y,1))];
-    ub = [log10(1e4*ones(num_ads_x*num_ads_y,1)); 
-          log10(1e1*ones(num_ads_x*num_ads_y,1))];
-    
-    % Regularization
-    lambda_kon = 1e-2; 
-    lambda_koff = 5e-3;
-    
+    % Regularization parameter
+    lambda = 1e-3;
+
+    % ================ SOLVE INVERSION ================
+    fprintf('Solving inverse problem...\n');
     options = optimoptions('fmincon', 'Display', 'iter',...
-        'Algorithm', 'interior-point', 'MaxIterations', 100,...
+        'Algorithm', 'interior-point', 'MaxIterations', 10,...
         'UseParallel', true);
     
-    % ================ SOLVE INVERSION ================
-    p_opt = fmincon(@(p) joint_cost_function(p, s_obs, num_ads_x, num_ads_y,...
-        lambda_kon, lambda_koff, gridN_x, gridN_y, gridN_z, ads_x_range,...
-        ads_y_range, ads_layer, velocity_profile, c0_assoc, c0_diss,...
-        t_association, t_dissociation, D_coeff, ru_to_m),...
+    p_opt = fmincon(@(p) cost_function(p, s_obs, gridN_x, gridN_y, gridN_z,...
+        ads_x_range, ads_y_range, ads_layer, velocity_profile, c0_assoc,...
+        c0_diss, t_association, t_dissociation, D_coeff, ru_to_m, lambda),...
         p0, [], [], [], [], lb, ub, [], options);
-    
-    % ================ RESULTS & VISUALIZATION ================
-    [kon_est, koff_est] = unpack_parameters(p_opt, num_ads_x, num_ads_y);
-    
+    % Convert back to linear space
+    recovered_kon = 10.^p_opt;
+    recovered_kon_grid = reshape(recovered_kon, size(true_kon_grid));
+
+    % ================ VISUALIZATION ================
+    % Plot true and recovered kon distributions
     figure;
-    subplot(2,2,1); imagesc(log10(true_kon_grid')); colorbar; title('True log(k_{on})');
-    subplot(2,2,2); imagesc(log10(kon_est')); colorbar; title('Estimated log(k_{on})');
-    subplot(2,2,3); imagesc(log10(true_koff_grid')); colorbar; title('True log(k_{off})');
-    subplot(2,2,4); imagesc(log10(koff_est')); colorbar; title('Estimated log(k_{off})');
+    subplot(1,2,1);
+%     imagesc(log10(true_kon_grid'));  % Transpose for correct orientation
+    imagesc(true_kon_grid');
+    colorbar; title('True log(k_{on})'); axis equal tight;
     
+    subplot(1,2,2);
+%     imagesc(log10(recovered_kon_grid'));  % Transpose here too
+    imagesc(log10(recovered_kon_grid'));  % Transpose here too
+
+    colorbar; title('Recovered log(k_{on})'); axis equal tight;
+
     % Plot sensorgram comparison
-    [~, s_fit] = joint_cost_function(p_opt, s_obs, gridN_x, gridN_y, gridN_z,...
+    [~, s_fit] = cost_function(p_opt, s_obs, gridN_x, gridN_y, gridN_z,...
         ads_x_range, ads_y_range, ads_layer, velocity_profile, c0_assoc,...
         c0_diss, t_association, t_dissociation, D_coeff, ru_to_m, 0); % No regularization for final fit
     
@@ -77,7 +97,6 @@ function heterogeneous_binding_analysis()
     plot(t, s_fit, 'LineWidth', 2, 'DisplayName', 'Fit');
     xlabel('Time (s)'); ylabel('Response (RU)');
     legend; title('Sensorgram Comparison');
-
 end
 
 %% Helper Functions
@@ -88,36 +107,22 @@ function velocity_profile = create_velocity_profile(nz, max_velocity)
     velocity_profile = reshape(velocity_profile, [1, 1, nz]);
 end
 
-function [kon_grid, koff_grid] = create_ground_truth_pattern(ads_x_range, ads_y_range)
-    ads_x_cells = ads_x_range(1):ads_x_range(2);
-    ads_y_cells = ads_y_range(1):ads_y_range(2);
-    [X,Y] = meshgrid(ads_x_cells, ads_y_cells);
+function [kon_grid, koff_grid, smax_grid] = generate_hetero_param_grids(...
+    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, kon_values)
     
-    % kon pattern
-    kon_grid = 1e2*ones(size(X));
-    kon_grid(X > mean(ads_x_range) & Y > mean(ads_y_range)) = 1e3;
-    kon_grid(X < mean(ads_x_range) & Y < mean(ads_y_range)) = 1e1;
-    
-    % koff pattern (anti-correlated with kon)
-    koff_grid = 1e-2*ones(size(X));
-    koff_grid(X > mean(ads_x_range) & Y > mean(ads_y_range)) = 1e-3;
-    koff_grid(X < mean(ads_x_range) & Y < mean(ads_y_range)) = 1e-1;
-end
-
-%% Parameter Grid Generation (Updated)
-function [kon_3d, koff_3d, smax_3d] = generate_param_grids(...
-    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, kon_grid, koff_grid)
-    
-    kon_3d = zeros(nx, ny, nz);
-    koff_3d = zeros(nx, ny, nz);
-    smax_3d = zeros(nx, ny, nz);
+    kon_grid = zeros(nx, ny, nz);
+    koff_grid = zeros(nx, ny, nz);  % Homogeneous koff for this example
+    smax_grid = zeros(nx, ny, nz);
     
     x_idx = ads_x_range(1):ads_x_range(2);
     y_idx = ads_y_range(1):ads_y_range(2);
     
-    kon_3d(x_idx, y_idx, ads_layer) = kon_grid;
-    koff_3d(x_idx, y_idx, ads_layer) = koff_grid;
-    smax_3d(x_idx, y_idx, ads_layer) = 1;
+    % Assign cell-specific kon values
+    kon_grid(x_idx, y_idx, ads_layer) = kon_values;
+    
+    % Set constant koff and smax
+    koff_grid(x_idx, y_idx, ads_layer) = 1e-2;  % Fixed koff
+    smax_grid(x_idx, y_idx, ads_layer) = 1;      % Fixed smax
 end
 %% Create TV operators for 2D grid
 function [Dx, Dy] = create_tv_operators(nx, ny)
@@ -129,45 +134,35 @@ function [Dx, Dy] = create_tv_operators(nx, ny)
     Dy = spdiags([-ones(ny,1) ones(ny,1)], [0 1], ny, ny);
     Dy = kron(Dy, speye(nx));
 end
-%% Parameter Handling Utilities
-function [kon_grid, koff_grid] = unpack_parameters(p, num_ads_x, num_ads_y)
-    num_cells = num_ads_x * num_ads_y;
-    kon_log = p(1:num_cells);
-    koff_log = p(num_cells+1:end);
+function [cost, s_fit] = cost_function(p, s_obs, nx, ny, nz, ads_x_range,...
+    ads_y_range, ads_layer, velocity_profile, c0_assoc, c0_diss,...
+    t_assoc, t_total, D_coeff, ru_to_m, lambda)
     
-    kon_grid = reshape(10.^kon_log, num_ads_x, num_ads_y);
-    koff_grid = reshape(10.^koff_log, num_ads_x, num_ads_y);
-end
-function [cost, s_fit] = joint_cost_function(p, s_obs, num_ads_x, num_ads_y,...
-    lambda_kon, lambda_koff, nx, ny, nz, ads_x_range, ads_y_range, ads_layer,...
-    velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m)
-    
-    % Unpack parameters
-    [kon_grid, koff_grid] = unpack_parameters(p, num_ads_x, num_ads_y);
-    
-    % Generate 3D parameter grids
-    [kon_3d, koff_3d, smax_3d] = generate_param_grids(...
-        nx, ny, nz, ads_x_range, ads_y_range, ads_layer, kon_grid, koff_grid);
+    % Convert from log-scale to linear
+    kon_values = 10.^p;
+    num_x = length(ads_x_range(1):ads_x_range(2));
+    num_y = length(ads_y_range(1):ads_y_range(2));
+    kon_grid = reshape(10.^p, num_x, num_y);  % Correct dimensions [6×3]
+
+    % Generate parameter grids
+    [kon_3d, koff_3d, smax_3d] = generate_hetero_param_grids(...
+        nx, ny, nz, ads_x_range, ads_y_range, ads_layer, kon_grid);
     
     % Run forward model
     [~, ~, s] = simulate_3d_flow_model(nx, ny, nz, kon_3d, koff_3d,...
         smax_3d, velocity_profile, c0_assoc, c0_diss, t_assoc,...
         t_total, D_coeff, ru_to_m);
-    
+    %[Dx, Dy] = create_tv_operators(num_x, num_y);
     % Extract signal
     s_fit = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
         ads_y_range(1):ads_y_range(2), ads_layer), [2,3,4]));
-    
-    % Calculate TV regularization
-    [Dx, Dy] = create_tv_operators(num_ads_x, num_ads_y);
-    kon_vec = kon_grid(:);
-    koff_vec = koff_grid(:);
-    
-    tv_kon = sum(abs(Dx*kon_vec)) + sum(abs(Dy*kon_vec));
-    tv_koff = sum(abs(Dx*koff_vec)) + sum(abs(Dy*koff_vec));
+    p_matrix = kon_grid;
+    % Vectorize the matrix column-wise for correct operator application
+    p_vec = p_matrix(:);
+    %tv_penalty = sum(abs(Dx*p_vec)) + sum(abs(Dy*p_vec));
     
     % Total cost
-    cost = norm(s_obs - s_fit) + lambda_kon*tv_kon + lambda_koff*tv_koff;
+    cost = norm(s_obs - s_fit); %+ lambda*tv_penalty;
 end
 
 function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...

@@ -33,7 +33,7 @@ function transport_limited_adsorption_3d_experimental
     % Generate parabolic velocity profile
     z_indices = 0:(gridN_z - 1); % Physical z from 0 to h (MATLAB indices 1:gridN_z)
     velocity_profile = 4 * k_flow_horizontal * (z_indices/h) .* (1 - z_indices/h);
-    velocity_profile = gpuArray(reshape(velocity_profile, [1, 1, gridN_z])); % GPU array
+    velocity_profile = reshape(velocity_profile, [1, 1, gridN_z]); % GPU array
     figure;
     plot(z_indices, squeeze(velocity_profile), 'LineWidth', 2);
     xlabel('Vertical Position (z)');
