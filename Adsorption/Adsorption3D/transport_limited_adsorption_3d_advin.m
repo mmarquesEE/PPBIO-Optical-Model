@@ -16,7 +16,7 @@ function transport_limited_adsorption_3d_experimental
     t_association = 500;           % Association phase duration
     t_dissociation = 800;          % Total simulation time
     adsorption_z_layer = 1;        % Adsorption layer (z=1, bottom)
-    D_coeff = 6e-5;                % Diffusion coefficient (mm²/s)
+    D_coeff = 6e-3;                % Diffusion coefficient (mm²/s)
 
     % Localized inlet/outlet positions
     inlet_x = 1;                   % Inlet at first column
@@ -83,8 +83,8 @@ function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     y0 = [c_s(:); s(:)];  % Flatten for ODE solver
     
     % Time parameters
-    tspan_assoc = linspace(0, t_assoc, t_assoc*10);
-    tspan_diss = linspace(t_assoc, t_total, t_assoc*10);
+    tspan_assoc = linspace(0, t_assoc, t_assoc/10);
+    tspan_diss = linspace(t_assoc, t_total, t_assoc/10);
     
     % Solve ODE
     options = odeset('RelTol',1e-5,'AbsTol',1e-8);

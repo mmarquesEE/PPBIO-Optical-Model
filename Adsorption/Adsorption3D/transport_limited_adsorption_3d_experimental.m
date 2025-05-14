@@ -3,8 +3,8 @@ function transport_limited_adsorption_3d_experimental
     clear all; close all; clc;
     % ==================== MOLECULE PARAMETERS ====================
     % ==================== SIMULATION PARAMETERS ====================
-    gridN_x = 55;                  % Length dimension (11 mm)
-    gridN_y = 9;                  % Depth dimension (1.7 mm)
+    gridN_x = 25;                  % Length dimension (11 mm)
+    gridN_y = 5;                  % Depth dimension (1.7 mm)
     gridN_z = 3;                   % Height dimension (0.3 mm)
     roughness_scale = 0;           % No surface roughness
     c0 = 3.3e-6;                  % Inlet concentration (0.21 μM)
