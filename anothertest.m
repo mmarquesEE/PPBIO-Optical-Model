@@ -1,0 +1,241 @@
+%% Main Script for Testing the Equivalence Theorem in 3D Flow-Diffusion Model
+clear all; close all; clc;
+
+%% ================ SIMULATION PARAMETERS ================
+% Grid dimensions
+nx = 25;          % Reduced grid for faster testing
+ny = 5;
+nz = 3;
+ads_layer = 1;    % Adsorption layer (z=1)
+ads_x_range = [10,14]; % Adsorption region
+ads_y_range = [2,4];   % y-region
+% Base parameters
+c0_assoc = 3.3e-6;    % Association concentration (M)
+c0_diss = 0;          % Dissociation concentration
+t_association = 800;  % Time units (seconds)
+t_total = 1200;
+D_coeff = 6e-3;       % Diffusion coefficient (cm²/s)
+ru_to_m = 1e-6;       % RU conversion factor
+
+% Flow velocity profile (parabolic in z-direction)
+velocity_profile = create_velocity_profile(nz, 8.3);
+
+%% ================ PARAMETER SETS ================
+rng(42); % Seed for reproducibility
+% Define adsorption region cells and mask
+ads_x_cells = ads_x_range(1):ads_x_range(2);
+ads_y_cells = ads_y_range(1):ads_y_range(2);
+num_ads_cells = length(ads_x_cells)*length(ads_y_cells);
+[ads_x_grid, ads_y_grid] = meshgrid(ads_x_cells, ads_y_cells);
+ads_mask = false(nx, ny);
+ads_mask(sub2ind([nx, ny], ads_x_grid(:), ads_y_grid(:))) = true;
+
+% --- Parameter Set 1 (p1: Base parameters) ---
+% Initialize parameters with zeros outside adsorption region
+kon1 = zeros(nx, ny);
+koff1 = zeros(nx, ny);
+smax1 = zeros(nx, ny);
+
+% Assign random values to adsorption region and normalize
+kon1(ads_mask) = rand(num_ads_cells, 1);
+kon1(ads_mask) = kon1(ads_mask) / sum(kon1(ads_mask)) * 9.4e3 * num_ads_cells;
+
+koff1(ads_mask) = rand(num_ads_cells, 1);
+koff1(ads_mask) = koff1(ads_mask) / sum(koff1(ads_mask)) * 0.0078 * num_ads_cells;
+
+smax1(ads_mask) = 1 / num_ads_cells;  % Sum over A = 1.0
+
+% Composite parameters (for reference)
+alpha1 = kon1 .* smax1;
+gamma1 = koff1 ./ kon1;
+
+% --- Parameter Set 2 (p2: Permuted parameters) ---
+% Permute parameters within the adsorption region
+ads_linear_indices = find(ads_mask);
+permuted_indices = ads_linear_indices(randperm(num_ads_cells));
+
+kon2 = zeros(nx, ny);
+kon2(ads_mask) = kon1(permuted_indices);
+
+koff2 = zeros(nx, ny);
+koff2(ads_mask) = koff1(permuted_indices);
+
+smax2 = zeros(nx, ny);
+smax2(ads_mask) = smax1(permuted_indices);
+
+% --- Parameter Set 3 (p3: Non-equivalent parameters) ---
+kon3 = kon1;
+koff3 = koff1*1.5;  % Alters gamma (changes mean koff)
+smax3 = smax1;
+
+%% ================ GENERATE 3D PARAMETER GRIDS ================
+% Generate 3D grids with parameters only in ads_layer
+[kon_grid_p1, koff_grid_p1, smax_grid_p1] = generate_param_grids(...
+    nx, ny, nz, ads_layer, kon1, koff1, smax1);
+
+[kon_grid_p2, koff_grid_p2, smax_grid_p2] = generate_param_grids(...
+    nx, ny, nz, ads_layer, kon2, koff2, smax2);
+
+[kon_grid_p3, koff_grid_p3, smax_grid_p3] = generate_param_grids(...
+    nx, ny, nz, ads_layer, kon3, koff3, smax3);
+%% ================ RUN SIMULATIONS ================
+% Simulate for p1
+[t_p1, ~, s_p1] = simulate_3d_flow_model(...
+    nx, ny, nz, kon_grid_p1, koff_grid_p1, smax_grid_p1, velocity_profile, ...
+    c0_assoc, c0_diss, t_association, t_total, D_coeff, ru_to_m);
+
+% Simulate for p2
+[t_p2, ~, s_p2] = simulate_3d_flow_model(...
+    nx, ny, nz, kon_grid_p2, koff_grid_p2, smax_grid_p2, velocity_profile, ...
+    c0_assoc, c0_diss, t_association, t_total, D_coeff, ru_to_m);
+
+% Simulate for p3
+[t_p3, ~, s_p3] = simulate_3d_flow_model(...
+    nx, ny, nz, kon_grid_p3, koff_grid_p3, smax_grid_p3, velocity_profile, ...
+    c0_assoc, c0_diss, t_association, t_total, D_coeff, ru_to_m);
+
+%% ================ POST-PROCESSING ================
+% Compute observed signals
+sobs_p1 = squeeze(sum(s_p1, [2 3 4]));
+sobs_p2 = squeeze(sum(s_p2, [2 3 4]));
+sobs_p3 = squeeze(sum(s_p3, [2 3 4]));
+
+% Calculate kernels K(x,y,z,t)
+alpha_grid_p1 = kon_grid_p1 .* smax_grid_p1;
+alpha_grid_p1 = reshape(alpha_grid_p1, [1, nx, ny, nz]); % Add leading singleton dimension
+K_p1 = bsxfun(@rdivide, s_p1, alpha_grid_p1);
+K_p1(isnan(K_p1)) = 0; % Handle 0/0 in non-adsorption layers
+
+alpha_grid_p2 = kon_grid_p2 .* smax_grid_p2;
+alpha_grid_p2 = reshape(alpha_grid_p2, [1, nx, ny, nz]);
+K_p2 = bsxfun(@rdivide, s_p2, alpha_grid_p2);
+K_p2(isnan(K_p2)) = 0;
+
+alpha_grid_p3 = kon_grid_p3 .* smax_grid_p3;
+alpha_grid_p3 = reshape(alpha_grid_p3, [1, nx, ny, nz]);
+K_p3 = bsxfun(@rdivide, s_p3, alpha_grid_p3);
+K_p3(isnan(K_p3)) = 0;
+
+
+%% ================ VALIDATION ================
+% Verify kernel reconstruction
+sobs_from_K_p1 = squeeze(sum(alpha_grid_p1 .* K_p1, [2 3 4]));
+recon_error = max(abs(sobs_p1 - sobs_from_K_p1));
+fprintf('Kernel reconstruction error: %.2e RU\n', recon_error);
+
+% Check equivalence between p1 and p2
+max_diff_p1_p2 = max(abs(sobs_p1 - sobs_p2));
+fprintf('Max difference (p1 vs p2): %.2e RU\n', max_diff_p1_p2);
+
+% Check difference between p1 and p3
+max_diff_p1_p3 = max(abs(sobs_p1 - sobs_p3));
+fprintf('Max difference (p1 vs p3): %.2e RU\n', max_diff_p1_p3);
+
+%% ================ VISUALIZATION ================
+figure;
+subplot(1,2,1);
+plot(t_p1, sobs_p1, 'b', t_p2, sobs_p2, 'r--');
+legend('p1', 'p2 (permuted)');
+title('Equivalence Test: Permuted Parameters');
+xlabel('Time (s)'); ylabel('s_{obs} (RU)');
+
+subplot(1,2,2);
+plot(t_p1, sobs_p1, 'b', t_p3, sobs_p3, 'g--');
+legend('p1', 'p3 (non-equiv)');
+title('Non-Equivalent Parameter Test');
+xlabel('Time (s)'); ylabel('s_{obs} (RU)');
+
+%% Helper Functions
+function velocity_profile = create_velocity_profile(nz, max_velocity)
+    z_indices = 0:(nz - 1);
+    h = nz - 1;
+    velocity_profile = 4 * max_velocity * (z_indices/h) .* (1 - z_indices/h);
+    velocity_profile = reshape(velocity_profile, [1, 1, nz]);
+end
+
+function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
+    koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss,...
+    t_assoc, t_total, D_coeff, ru_to_m)
+    
+    % Initialize concentrations
+    c_s = zeros(nx, ny, nz);
+    c_s(1, :, :) = c0_assoc;  % Inlet at x=1
+    s = zeros(nx, ny, nz);
+    y0 = [c_s(:); s(:)];
+
+    % Time parameters
+    tspan_assoc = linspace(0, t_assoc, round(t_assoc*max(velocity_profile)));
+    tspan_diss = linspace(t_assoc, t_total, round(t_assoc*max(velocity_profile)));
+    
+    
+    % Solve ODE
+    options = odeset('RelTol',1e-6,'AbsTol',1e-8);
+    [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz,...
+        velocity_profile, kon_grid, koff_grid, smax_grid, c0_assoc,...
+        D_coeff, ru_to_m), tspan_assoc, y0, options);
+    
+    % Reset for dissociation
+    y_end_assoc = y_assoc(end,:)';
+    c_s_end = reshape(y_end_assoc(1:nx*ny*nz), [nx, ny, nz]);
+    s_end = reshape(y_end_assoc(nx*ny*nz+1:end), [nx, ny, nz]);
+    
+    c_s_end(1, :, :) = c0_diss;
+    y0_diss = [c_s_end(:); s_end(:)];
+    
+    [t_diss, y_diss] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz,...
+        velocity_profile, kon_grid, koff_grid, smax_grid, c0_diss,...
+        D_coeff, ru_to_m), tspan_diss, y0_diss, options);
+    
+    % Combine results
+    t = [t_assoc; t_diss(2:end)];
+    y = [y_assoc; y_diss(2:end,:)];
+    c_s = reshape(y(:,1:nx*ny*nz), [length(t), nx, ny, nz]);
+    s = reshape(y(:,nx*ny*nz+1:end), [length(t), nx, ny, nz]);
+end
+
+function dydt = ode_system(t, y, nx, ny, nz, velocity_profile,...
+    kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m)
+    
+    % Reshape state variables
+    c_s = reshape(y(1:nx*ny*nz), [nx, ny, nz]);
+    s = reshape(y(nx*ny*nz+1:end), [nx, ny, nz]);
+    dcsdt = zeros(nx, ny, nz);
+    dsdt = zeros(nx, ny, nz);
+    
+    % Diffusion terms
+    d2c_dx2 = zeros(nx, ny, nz);
+    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:));
+    
+    d2c_dz2 = zeros(nx, ny, nz);
+    d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
+    d2c_dz2(:,:,1) = c_s(:,:,2) - 2*c_s(:,:,1) + c_s(:,:,1);
+    d2c_dz2(:,:,end) = c_s(:,:,end-1) - 2*c_s(:,:,end) + c_s(:,:,end-1);
+    
+    dcsdt = D_coeff * (d2c_dx2 + d2c_dz2);
+    
+    % Advection
+    dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + ...
+        bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
+    
+    % Adsorption kinetics
+    available_sites = max(smax_grid - s, 0);
+    dsdt = kon_grid .* c_s .* available_sites - koff_grid .* s;
+    dcsdt = dcsdt - (dsdt * ru_to_m);
+    
+    % Inlet boundary condition
+    c_s(1,:,:) = c0;
+    dcsdt(1,:,:) = 0;
+    
+    dydt = [dcsdt(:); dsdt(:)];
+end
+%% Helper Functions (Revised generate_param_grids)
+function [kon_grid, koff_grid, smax_grid] = generate_param_grids(nx, ny, nz, ads_layer, kon, koff, smax)
+    kon_grid = zeros(nx, ny, nz);
+    kon_grid(:,:,ads_layer) = kon;
+    
+    koff_grid = zeros(nx, ny, nz);
+    koff_grid(:,:,ads_layer) = koff;
+    
+    smax_grid = zeros(nx, ny, nz);
+    smax_grid(:,:,ads_layer) = smax;
+end

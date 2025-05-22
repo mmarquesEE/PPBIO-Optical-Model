@@ -3,6 +3,7 @@ function heterogeneous_binding_analysis()
     clearvars; close all; clc;
     
     % ================ SIMULATION PARAMETERS ================
+    % Physical dimensions
     gridN_x = 25;          % Reduced grid for faster testing
     gridN_y = 5;
     gridN_z = 3;
@@ -12,8 +13,8 @@ function heterogeneous_binding_analysis()
     c0_assoc = 3.3e-6;     % Association concentration
     c0_diss = 0;           % Dissociation concentration
     t_association = 800;  % Simulation times
-    t_dissociation = 1600;
-    D_coeff = 6e-3;        % Diffusion coefficient
+    t_dissociation = 1200;
+    D_coeff = 6e-3;        % Diffusion coefficient cm^2/s
     ru_to_m = 1e-6;        % RU conversion
     
     % Regularization parameters
@@ -102,8 +103,8 @@ function homog_params = estimate_homogeneous_parameters(t, s_obs, c0_assoc,...
     gridN_x, gridN_y, gridN_z, ads_layer, velocity_profile, D_coeff, ru_to_m)
     
     % Parameter bounds [kon, koff, smax_total]
-    lb = [1e3, 1e-5, 0.1];  
-    ub = [1e5, 1e-1, 10];
+    lb = [1e3, 1e-5, 0.9];  
+    ub = [1e5, 1e-1, 1.1];
     
     % Objective function
     cost_func = @(p) homogeneous_cost(p, t, s_obs, c0_assoc, t_assoc, t_diss,...
@@ -111,8 +112,8 @@ function homog_params = estimate_homogeneous_parameters(t, s_obs, c0_assoc,...
         ads_layer, velocity_profile, D_coeff, ru_to_m);
     
     % Optimization
-    options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 10);
-    homog_params = fmincon(cost_func, [1e4, 1e-3, 1.0], [], [], [], [], lb, ub, [], options);
+    options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 2);
+    homog_params = fmincon(cost_func, [9.4e3, 0.0078, 1.0], [], [], [], [], lb, ub, [], options);
     
     fprintf('Homogeneous parameters estimated:\n');
     fprintf('kon = %.2e M^{-1}s^{-1}\nkoff = %.2e s^{-1}\nsmax_total = %.2f RU\n',...
@@ -193,7 +194,7 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
 
     % Optimization options
     options = optimoptions('fmincon', 'Display', 'iter',...
-        'Algorithm', 'interior-point', 'MaxIterations', 70,...
+        'Algorithm', 'interior-point', 'MaxIterations', 2,...
         'UseParallel', true, 'OutputFcn', @outputfun,'MaxFunctionEvaluations',10000);
     
     % Run optimization
@@ -390,11 +391,11 @@ function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     y0 = [c_s(:); s(:)];
 
     % Time parameters
-    tspan_assoc = linspace(0, t_assoc, 300);
-    tspan_diss = linspace(t_assoc, t_total, 300);
+    tspan_assoc = linspace(0, t_assoc, round(t_assoc*max(velocity_profile)));
+    tspan_diss = linspace(t_assoc, t_total, round(t_assoc*max(velocity_profile)));
     
     % Solve ODE
-    options = odeset('RelTol',1e-4,'AbsTol',1e-6);
+    options = odeset('RelTol',1e-5,'AbsTol',1e-7);
     [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz,...
         velocity_profile, kon_grid, koff_grid, smax_grid, c0_assoc,...
         D_coeff, ru_to_m), tspan_assoc, y0, options);
@@ -429,7 +430,7 @@ function dydt = ode_system(t, y, nx, ny, nz, velocity_profile,...
     
     % Diffusion terms
     d2c_dx2 = zeros(nx, ny, nz);
-    d2c_dx2(2:end-1,:,:) = c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:);
+    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:));
     
     d2c_dz2 = zeros(nx, ny, nz);
     d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);

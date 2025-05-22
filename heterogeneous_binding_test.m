@@ -3,7 +3,6 @@ function heterogeneous_binding_analysis()
     clearvars; close all; clc;
     
     % ================ SIMULATION PARAMETERS ================
-    % Physical dimensions
     gridN_x = 25;          % Reduced grid for faster testing
     gridN_y = 5;
     gridN_z = 3;
@@ -12,16 +11,16 @@ function heterogeneous_binding_analysis()
     ads_y_range = [2,4];   % y-region
     c0_assoc = 3.3e-6;     % Association concentration
     c0_diss = 0;           % Dissociation concentration
-    t_association = 800;  % Simulation times
-    t_dissociation = 1200;
-    D_coeff = 6e-3;        % Diffusion coefficient cm^2/s
+    t_association = 800;   % Simulation times
+    t_dissociation = 1600;
+    D_coeff = 6e-3;        % Diffusion coefficient
     ru_to_m = 1e-6;        % RU conversion
     
     % Regularization parameters
     lambda_kon = 1e-2;
     lambda_koff = 1e-2;
     lambda_smax = 1e-2;
-    lambda_mean = 5e2;     % Constraint strength
+    lambda_mean = 1e2;     % Constraint strength
     
     % Flow parameters
     velocity_profile = create_velocity_profile(gridN_z, 8.3);
@@ -65,10 +64,12 @@ function heterogeneous_binding_analysis()
         gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
         true_kon_grid, true_koff_grid, true_smax_grid);
 
-    % Run forward model
+    % Run forward model with updated parameters
     [t, ~, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_grid,...
-        koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss,...
-        t_association, t_dissociation, D_coeff, ru_to_m);
+        koff_grid, smax_grid, velocity_profile, 0, 0, c0_assoc, c0_diss,...
+        t_association, t_association + t_dissociation, ru_to_m, ads_layer,...
+        1, [1, gridN_y], [1, gridN_z], gridN_x, [1, gridN_y], [1, gridN_z],...
+        D_coeff, ads_x_range, ads_y_range);
     
     % Generate noisy observations
     s_obs = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
@@ -97,22 +98,22 @@ function heterogeneous_binding_analysis()
         true_koff_grid, true_smax_grid, t, s_obs);
 end
 
-%% Homogeneous parameter estimation
+%% Homogeneous parameter estimation (updated calls)
 function homog_params = estimate_homogeneous_parameters(t, s_obs, c0_assoc,...
     t_assoc, t_diss, ads_x_range, ads_y_range, num_ads_cells,...
     gridN_x, gridN_y, gridN_z, ads_layer, velocity_profile, D_coeff, ru_to_m)
     
     % Parameter bounds [kon, koff, smax_total]
     lb = [1e3, 1e-5, 0.1];  
-    ub = [1e5, 1e-1, 2.0];
+    ub = [1e5, 1e-1, 10];
     
-    % Objective function
+    % Objective function with updated simulate_3d_flow_model call
     cost_func = @(p) homogeneous_cost(p, t, s_obs, c0_assoc, t_assoc, t_diss,...
         ads_x_range, ads_y_range, num_ads_cells, gridN_x, gridN_y, gridN_z,...
         ads_layer, velocity_profile, D_coeff, ru_to_m);
     
     % Optimization
-    options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 200);
+    options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 10);
     homog_params = fmincon(cost_func, [9.4e3, 0.0078, 1.0], [], [], [], [], lb, ub, [], options);
     
     fprintf('Homogeneous parameters estimated:\n');
@@ -138,10 +139,12 @@ function cost = homogeneous_cost(p, t, s_obs, c0_assoc, t_assoc, t_diss,...
     koff_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = koff;
     smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = smax_total/num_ads_cells;
     
-    % Run simulation
+    % Run simulation with updated parameters
     [~, ~, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_grid,...
-        koff_grid, smax_grid, velocity_profile, c0_assoc, 0, t_assoc,...
-        t_diss, D_coeff, ru_to_m);
+        koff_grid, smax_grid, velocity_profile, 0, 0, c0_assoc, 0,...
+        t_assoc, t_assoc + t_diss, ru_to_m, ads_layer,...
+        1, [1, gridN_y], [1, gridN_z], gridN_x, [1, gridN_y], [1, gridN_z],...
+        D_coeff, ads_x_range, ads_y_range);
     
     % Calculate cost
     s_fit = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
@@ -149,7 +152,7 @@ function cost = homogeneous_cost(p, t, s_obs, c0_assoc, t_assoc, t_diss,...
     cost = norm(s_obs - s_fit);
 end
 
-%% Constrained heterogeneous inversion
+%% Constrained heterogeneous inversion (updated calls)
 function [p_opt, animation_data] = solve_constrained_inversion(...
     homog_params, s_obs, gridN_x, gridN_y, gridN_z,...
     ads_x_range, ads_y_range, ads_layer, velocity_profile,...
@@ -182,7 +185,7 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
     global animation_data;
     animation_data = struct('iter', {}, 'p', {}, 's_fit', {});
     
-    % Initial evaluation
+    % Initial evaluation with updated simulate_3d_flow_model call
     [~, s_fit_initial] = constrained_cost(p0, s_obs, homog_params,...
         gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
         velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
@@ -194,7 +197,7 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
 
     % Optimization options
     options = optimoptions('fmincon', 'Display', 'iter',...
-        'Algorithm', 'interior-point', 'MaxIterations', 200,...
+        'Algorithm', 'interior-point', 'MaxIterations', 100,...
         'UseParallel', true, 'OutputFcn', @outputfun,'MaxFunctionEvaluations',10000);
     
     % Run optimization
@@ -248,10 +251,12 @@ function [cost, s_fit] = constrained_cost(p, s_obs, homog_params,...
         gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
         kon_grid, koff_grid, smax_grid);
     
-    % Run simulation
+    % Run simulation with updated parameters
     [~, ~, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_3d,...
-        koff_3d, smax_3d, velocity_profile, c0_assoc, c0_diss, t_assoc,...
-        t_total, D_coeff, ru_to_m);
+        koff_3d, smax_3d, velocity_profile, 0, 0, c0_assoc, c0_diss,...
+        t_assoc, t_total, ru_to_m, ads_layer,...
+        1, [1, gridN_y], [1, gridN_z], gridN_x, [1, gridN_y], [1, gridN_z],...
+        D_coeff, ads_x_range, ads_y_range);
     
     % Calculate misfit
     s_fit = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
@@ -281,12 +286,12 @@ function [cost, s_fit] = constrained_cost(p, s_obs, homog_params,...
            constraint_kon + constraint_koff + constraint_smax;
 end
 
-%% Visualization function
+%% Visualization function (unchanged)
 function generate_results_animation(animation_data, true_kon_grid,...
     true_koff_grid, true_smax_grid, t, s_obs)
     
     fprintf('\nGenerating results animation...\n');
-    video_filename = 'constrained_inversion.mp4';
+    video_filename = 'constrained_inversion_test.mp4';
     v = VideoWriter(video_filename, 'MPEG-4');
     v.FrameRate = 2;
     open(v);
@@ -356,7 +361,7 @@ function generate_results_animation(animation_data, true_kon_grid,...
     fprintf('Animation saved as %s\n', video_filename);
 end
 
-%% Helper Functions
+%% Helper Functions (unchanged)
 function velocity_profile = create_velocity_profile(nz, max_velocity)
     z_indices = 0:(nz - 1);
     h = nz - 1;
@@ -379,38 +384,37 @@ function [kon_grid, koff_grid, smax_grid] = generate_hetero_param_grids(...
     smax_grid(x_idx, y_idx, ads_layer) = smax_values;
 end
 
-%% Simulation Functions (Unchanged from original)
+%% Simulation Functions (Updated as per user's request)
 function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
-    koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss,...
-    t_assoc, t_total, D_coeff, ru_to_m)
+    koff_grid, smax_grid, velocity_profile, k_flow_v, k_flow_d, c0_assoc, c0_diss,...
+    t_assoc, t_total, ru_to_m, ads_layer, inlet_x, inlet_y, inlet_z, outlet_x, outlet_y, outlet_z, D_coeff, ads_x_range, ads_y_range)
     
-    % Initialize concentrations
+    % Initialize state variables
     c_s = zeros(nx, ny, nz);
-    c_s(1, :, :) = c0_assoc;  % Inlet at x=1
+    c_s(inlet_x, inlet_y(1):inlet_y(2), inlet_z(1):inlet_z(2)) = c0_assoc;
     s = zeros(nx, ny, nz);
-    y0 = [c_s(:); s(:)];
+    y0 = [c_s(:); s(:)];  
 
     % Time parameters
-    tspan_assoc = linspace(0, t_assoc, round(t_assoc*max(velocity_profile)));
-    tspan_diss = linspace(t_assoc, t_total, round(t_assoc*max(velocity_profile)));
+    tspan_assoc = linspace(0, t_assoc, 300);
+    tspan_diss = linspace(t_assoc, t_total, 300);
     
-    % Solve ODE
-    options = odeset('RelTol',1e-5,'AbsTol',1e-7);
-    [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz,...
-        velocity_profile, kon_grid, koff_grid, smax_grid, c0_assoc,...
-        D_coeff, ru_to_m), tspan_assoc, y0, options);
+    % Solve ODE with velocity_profile
+    options = odeset('RelTol',1e-4,'AbsTol',1e-6);
+    [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,velocity_profile,k_flow_v,k_flow_d,...
+        kon_grid,koff_grid,smax_grid,c0_assoc,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
+        outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_assoc, y0, options);
     
-    % Reset for dissociation
+    % Reset for dissociation phase
     y_end_assoc = y_assoc(end,:)';
     c_s_end = reshape(y_end_assoc(1:nx*ny*nz), [nx, ny, nz]);
     s_end = reshape(y_end_assoc(nx*ny*nz+1:end), [nx, ny, nz]);
-    
-    c_s_end(1, :, :) = c0_diss;
+    c_s_end(inlet_x, inlet_y(1):inlet_y(2), inlet_z(1):inlet_z(2)) = c0_diss;
     y0_diss = [c_s_end(:); s_end(:)];
-    
-    [t_diss, y_diss] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz,...
-        velocity_profile, kon_grid, koff_grid, smax_grid, c0_diss,...
-        D_coeff, ru_to_m), tspan_diss, y0_diss, options);
+
+    [t_diss, y_diss] = ode15s(@(t,y) ode_system(t,y,nx,ny,nz,velocity_profile,k_flow_v,k_flow_d,...
+        kon_grid,koff_grid,smax_grid,c0_diss,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
+        outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range), tspan_diss, y0_diss', options);
     
     % Combine results
     t = [t_assoc; t_diss(2:end)];
@@ -419,8 +423,9 @@ function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     s = reshape(y(:,nx*ny*nz+1:end), [length(t), nx, ny, nz]);
 end
 
-function dydt = ode_system(t, y, nx, ny, nz, velocity_profile,...
-    kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m)
+function dydt = ode_system(t,y,nx,ny,nz,velocity_profile,~,~,kon_grid,...
+    koff_grid,smax_grid,c0,ru_to_m,ads_layer,inlet_x,inlet_y,inlet_z,...
+    outlet_x,outlet_y,outlet_z, D_coeff, ads_x_range, ads_y_range)
     
     % Reshape state variables
     c_s = reshape(y(1:nx*ny*nz), [nx, ny, nz]);
@@ -430,7 +435,7 @@ function dydt = ode_system(t, y, nx, ny, nz, velocity_profile,...
     
     % Diffusion terms
     d2c_dx2 = zeros(nx, ny, nz);
-    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:));
+    d2c_dx2(2:end-1,:,:) = c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:);
     
     d2c_dz2 = zeros(nx, ny, nz);
     d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
@@ -443,14 +448,22 @@ function dydt = ode_system(t, y, nx, ny, nz, velocity_profile,...
     dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + ...
         bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
     
-    % Adsorption kinetics with surface capacity constraint
-    available_sites = max(smax_grid - s, 0);
-    dsdt = kon_grid .* c_s .* available_sites - koff_grid .* s;
-    dcsdt = dcsdt - (dsdt * ru_to_m);
+    % Boundary conditions
+    inlet_y_range = inlet_y(1):inlet_y(2);
+    inlet_z_range = inlet_z(1):inlet_z(2);
+    dcsdt(inlet_x, inlet_y_range, inlet_z_range) = 0;
+    c_s(inlet_x, inlet_y_range, inlet_z_range) = c0;
+    %dcsdt(outlet_x, :, :) = 0;
     
-    % Inlet boundary condition (x=1)
-    c_s(1,:,:) = c0;
-    dcsdt(1,:,:) = 0;
+    % Adsorption kinetics
+    ads_mask = zeros(nx, ny, nz);
+    ads_mask(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = 1;
+    active_kon = kon_grid .* ads_mask;
+    active_koff = koff_grid .* ads_mask;
+    active_smax = smax_grid .* ads_mask;
+    %available_sites = max(active_smax - s, 0);
+    dsdt = active_kon .* c_s .* (active_smax-s) - active_koff .* s;
+    dcsdt = dcsdt - (dsdt * ru_to_m);
     
     dydt = [dcsdt(:); dsdt(:)];
 end

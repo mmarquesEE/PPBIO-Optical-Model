@@ -2,29 +2,42 @@ function heterogeneous_binding_analysis()
     % Main function for analyzing heterogeneous binding parameters
     clearvars; close all; clc;
     
+      
     % ================ SIMULATION PARAMETERS ================
-    % Physical dimensions
-    gridN_x = 25;          % Reduced grid for faster testing
-    gridN_y = 5;
+    % Physical dimensions (converted to meters)
+    Lx = 11e-3;     % 11 mm
+    Ly = 1.7e-3;    % 1.7 mm
+    Lz = 0.3e-3;    % 0.3 mm
+    
+    % Grid dimensions
+    gridN_x = 22;          % Reduced grid for faster testing
+    gridN_y = 17;
     gridN_z = 3;
+    
+    % Calculate grid spacing
+    dx = Lx / (gridN_x - 1);
+    dy = Ly / (gridN_y - 1);
+    dz = Lz / (gridN_z - 1);
+    
     ads_layer = 1;         % Adsorption layer (z=1)
     ads_x_range = [10,14]; % Adsorption region
     ads_y_range = [2,4];   % y-region
     c0_assoc = 3.3e-6;     % Association concentration
     c0_diss = 0;           % Dissociation concentration
-    t_association = 800;  % Simulation times
+    t_association = 800;   % Simulation times
     t_dissociation = 1200;
-    D_coeff = 6e-3;        % Diffusion coefficient cm^2/s
+    D_coeff = 6e-5 * 1e-4; % Convert cm²/s to m²/s
     ru_to_m = 1e-6;        % RU conversion
     
     % Regularization parameters
     lambda_kon = 1e-2;
     lambda_koff = 1e-2;
     lambda_smax = 1e-2;
-    lambda_mean = 5e2;     % Constraint strength
+    lambda_mean = 1e2;     % Constraint strength
     
-    % Flow parameters
-    velocity_profile = create_velocity_profile(gridN_z, 8.3);
+    % Flow parameters (velocity in m/s)
+    max_velocity = 8.3e-3; % Convert mm/s to m/s
+    velocity_profile = create_velocity_profile(gridN_z, max_velocity);
 
     % ================ SYNTHETIC DATA GENERATION ================
     fprintf('Generating synthetic data...\n');
@@ -68,7 +81,7 @@ function heterogeneous_binding_analysis()
     % Run forward model
     [t, ~, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_grid,...
         koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss,...
-        t_association, t_dissociation, D_coeff, ru_to_m);
+        t_association, t_dissociation, D_coeff, ru_to_m, dx, dy, dz);
     
     % Generate noisy observations
     s_obs = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
@@ -82,7 +95,7 @@ function heterogeneous_binding_analysis()
     homog_params = estimate_homogeneous_parameters(t, s_obs, c0_assoc,...
         t_association, t_dissociation, ads_x_range, ads_y_range,...
         num_ads_cells, gridN_x, gridN_y, gridN_z, ads_layer,...
-        velocity_profile, D_coeff, ru_to_m);
+        velocity_profile, D_coeff, ru_to_m, dx, dy, dz);
     
     % Step 2: Constrained heterogeneous inversion
     fprintf('\n=== Step 2: Heterogeneous inversion with constraints ===\n');
@@ -90,7 +103,7 @@ function heterogeneous_binding_analysis()
         homog_params, s_obs, gridN_x, gridN_y, gridN_z,...
         ads_x_range, ads_y_range, ads_layer, velocity_profile,...
         c0_assoc, c0_diss, t_association, t_dissociation,...
-        D_coeff, ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean);
+        D_coeff, ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean, dx, dy, dz);
 
     % ================ VISUALIZATION ================
     generate_results_animation(animation_data, true_kon_grid,...
@@ -100,19 +113,19 @@ end
 %% Homogeneous parameter estimation
 function homog_params = estimate_homogeneous_parameters(t, s_obs, c0_assoc,...
     t_assoc, t_diss, ads_x_range, ads_y_range, num_ads_cells,...
-    gridN_x, gridN_y, gridN_z, ads_layer, velocity_profile, D_coeff, ru_to_m)
+    gridN_x, gridN_y, gridN_z, ads_layer, velocity_profile, D_coeff, ru_to_m, dx, dy, dz)
     
     % Parameter bounds [kon, koff, smax_total]
     lb = [1e3, 1e-5, 0.1];  
-    ub = [1e5, 1e-1, 2.0];
+    ub = [1e5, 1e-1, 10];
     
     % Objective function
     cost_func = @(p) homogeneous_cost(p, t, s_obs, c0_assoc, t_assoc, t_diss,...
         ads_x_range, ads_y_range, num_ads_cells, gridN_x, gridN_y, gridN_z,...
-        ads_layer, velocity_profile, D_coeff, ru_to_m);
+        ads_layer, velocity_profile, D_coeff, ru_to_m, dx, dy, dz);
     
     % Optimization
-    options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 200);
+    options = optimoptions('fmincon', 'Display', 'iter', 'MaxIterations', 2);
     homog_params = fmincon(cost_func, [9.4e3, 0.0078, 1.0], [], [], [], [], lb, ub, [], options);
     
     fprintf('Homogeneous parameters estimated:\n');
@@ -122,7 +135,7 @@ end
 
 function cost = homogeneous_cost(p, t, s_obs, c0_assoc, t_assoc, t_diss,...
     ads_x_range, ads_y_range, num_ads_cells, gridN_x, gridN_y, gridN_z,...
-    ads_layer, velocity_profile, D_coeff, ru_to_m)
+    ads_layer, velocity_profile, D_coeff, ru_to_m, dx, dy, dz)
     
     % Create homogeneous parameter grids
     kon = p(1); 
@@ -141,7 +154,7 @@ function cost = homogeneous_cost(p, t, s_obs, c0_assoc, t_assoc, t_diss,...
     % Run simulation
     [~, ~, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_grid,...
         koff_grid, smax_grid, velocity_profile, c0_assoc, 0, t_assoc,...
-        t_diss, D_coeff, ru_to_m);
+        t_diss, D_coeff, ru_to_m, dx, dy, dz);
     
     % Calculate cost
     s_fit = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
@@ -154,7 +167,7 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
     homog_params, s_obs, gridN_x, gridN_y, gridN_z,...
     ads_x_range, ads_y_range, ads_layer, velocity_profile,...
     c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m,...
-    lambda_kon, lambda_koff, lambda_smax, lambda_mean)
+    lambda_kon, lambda_koff, lambda_smax, lambda_mean, dx, dy, dz)
     
     % Parameter setup
     ads_x_cells = ads_x_range(1):ads_x_range(2);
@@ -186,7 +199,7 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
     [~, s_fit_initial] = constrained_cost(p0, s_obs, homog_params,...
         gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
         velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean);
+        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean, dx, dy, dz);
     
     animation_data(1).p = p0;
     animation_data(1).s_fit = s_fit_initial;
@@ -194,14 +207,14 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
 
     % Optimization options
     options = optimoptions('fmincon', 'Display', 'iter',...
-        'Algorithm', 'interior-point', 'MaxIterations', 200,...
+        'Algorithm', 'interior-point', 'MaxIterations', 2,...
         'UseParallel', true, 'OutputFcn', @outputfun,'MaxFunctionEvaluations',10000);
     
     % Run optimization
     p_opt = fmincon(@(p) constrained_cost(p, s_obs, homog_params,...
         gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
         velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean),...
+        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean, dx, dy, dz),...
         p0, [], [], [], [], lb, ub, [], options);
 
     % Nested output function
@@ -211,7 +224,7 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
             [~, s_fit] = constrained_cost(p, s_obs, homog_params,...
                 gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
                 velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-                ru_to_m, 0, 0, 0, 0); % No reg for visualization
+                ru_to_m, 0, 0, 0, 0, dx, dy, dz); % No reg for visualization
             
             current_iter = optimValues.iteration + 1;
             animation_data(end+1).p = p;
@@ -224,7 +237,7 @@ end
 function [cost, s_fit] = constrained_cost(p, s_obs, homog_params,...
     gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
     velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-    ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean)
+    ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean, dx, dy, dz)
     
     % Split parameters
     num_ads_cells = length(ads_x_range(1):ads_x_range(2)) * ...
@@ -251,7 +264,7 @@ function [cost, s_fit] = constrained_cost(p, s_obs, homog_params,...
     % Run simulation
     [~, ~, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_3d,...
         koff_3d, smax_3d, velocity_profile, c0_assoc, c0_diss, t_assoc,...
-        t_total, D_coeff, ru_to_m);
+        t_total, D_coeff, ru_to_m, dx, dy, dz);
     
     % Calculate misfit
     s_fit = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2),...
@@ -359,7 +372,7 @@ end
 %% Helper Functions
 function velocity_profile = create_velocity_profile(nz, max_velocity)
     z_indices = 0:(nz - 1);
-    h = nz - 1;
+    h = (nz - 1);
     velocity_profile = 4 * max_velocity * (z_indices/h) .* (1 - z_indices/h);
     velocity_profile = reshape(velocity_profile, [1, 1, nz]);
 end
@@ -382,7 +395,7 @@ end
 %% Simulation Functions (Unchanged from original)
 function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss,...
-    t_assoc, t_total, D_coeff, ru_to_m)
+    t_assoc, t_total, D_coeff, ru_to_m, dx, dy, dz)
     
     % Initialize concentrations
     c_s = zeros(nx, ny, nz);
@@ -398,7 +411,7 @@ function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     options = odeset('RelTol',1e-5,'AbsTol',1e-7);
     [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz,...
         velocity_profile, kon_grid, koff_grid, smax_grid, c0_assoc,...
-        D_coeff, ru_to_m), tspan_assoc, y0, options);
+        D_coeff, ru_to_m, dx, dy, dz), tspan_assoc, y0, options);
     
     % Reset for dissociation
     y_end_assoc = y_assoc(end,:)';
@@ -410,7 +423,7 @@ function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
     
     [t_diss, y_diss] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz,...
         velocity_profile, kon_grid, koff_grid, smax_grid, c0_diss,...
-        D_coeff, ru_to_m), tspan_diss, y0_diss, options);
+        D_coeff, ru_to_m, dx, dy, dz), tspan_diss, y0_diss, options);
     
     % Combine results
     t = [t_assoc; t_diss(2:end)];
@@ -420,7 +433,7 @@ function [t, c_s, s] = simulate_3d_flow_model(nx, ny, nz, kon_grid,...
 end
 
 function dydt = ode_system(t, y, nx, ny, nz, velocity_profile,...
-    kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m)
+    kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m, dx, dy, dz)
     
     % Reshape state variables
     c_s = reshape(y(1:nx*ny*nz), [nx, ny, nz]);
@@ -428,27 +441,25 @@ function dydt = ode_system(t, y, nx, ny, nz, velocity_profile,...
     dcsdt = zeros(nx, ny, nz);
     dsdt = zeros(nx, ny, nz);
     
-    % Diffusion terms
+    % Diffusion terms with physical spacing
     d2c_dx2 = zeros(nx, ny, nz);
-    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:));
+    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:)) / dx^2;
     
     d2c_dz2 = zeros(nx, ny, nz);
-    d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
-    d2c_dz2(:,:,1) = c_s(:,:,2) - 2*c_s(:,:,1) + c_s(:,:,1);
-    d2c_dz2(:,:,end) = c_s(:,:,end-1) - 2*c_s(:,:,end) + c_s(:,:,end-1);
+    d2c_dz2(:,:,2:end-1) = (c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2)) / dz^2;
     
     dcsdt = D_coeff * (d2c_dx2 + d2c_dz2);
     
-    % Advection
-    dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + ...
-        bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
+    % Advection with physical spacing
+    velocity_term = bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
+    dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + velocity_term / dx;
     
     % Adsorption kinetics with surface capacity constraint
     available_sites = max(smax_grid - s, 0);
     dsdt = kon_grid .* c_s .* available_sites - koff_grid .* s;
     dcsdt = dcsdt - (dsdt * ru_to_m);
     
-    % Inlet boundary condition (x=1)
+    % Boundary conditions
     c_s(1,:,:) = c0;
     dcsdt(1,:,:) = 0;
     

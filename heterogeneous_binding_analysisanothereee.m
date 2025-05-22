@@ -12,7 +12,7 @@ function heterogeneous_binding_analysis()
     ads_y_range = [2,4];   % y-region
     c0_assoc = 3.3e-6;     % Association concentration
     c0_diss = 0;           % Dissociation concentration
-    t_association = 800;  % Simulation times
+    t_association = 800;   % Simulation times
     t_dissociation = 1200;
     D_coeff = 6e-3;        % Diffusion coefficient cm^2/s
     ru_to_m = 1e-6;        % RU conversion
@@ -21,8 +21,10 @@ function heterogeneous_binding_analysis()
     lambda_kon = 1e-2;
     lambda_koff = 1e-2;
     lambda_smax = 1e-2;
+    lambda_alpha = 1e-2;  % Composite binding rate regularization
+    lambda_gamma = 1e-2;  % Dissociation ratio regularization
     lambda_mean = 5e2;     % Constraint strength
-    
+
     % Flow parameters
     velocity_profile = create_velocity_profile(gridN_z, 8.3);
 
@@ -66,7 +68,7 @@ function heterogeneous_binding_analysis()
         true_kon_grid, true_koff_grid, true_smax_grid);
 
     % Run forward model
-    [t, ~, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_grid,...
+    [t, c_s, s] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_grid,...
         koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss,...
         t_association, t_dissociation, D_coeff, ru_to_m);
     
@@ -76,7 +78,9 @@ function heterogeneous_binding_analysis()
     noise_level = 0.02;
     s_obs = s_obs + noise_level*max(s_obs)*randn(size(s_obs));
 
-    % ================ TWO-STEP INVERSION ================
+    % ================ THEOREM-ENHANCED INVERSION ================
+    fprintf('\n=== Two-step inversion with theorem constraints ===\n');
+    
     % Step 1: Estimate homogeneous parameters
     fprintf('\n=== Step 1: Homogeneous parameter estimation ===\n');
     homog_params = estimate_homogeneous_parameters(t, s_obs, c0_assoc,...
@@ -84,13 +88,14 @@ function heterogeneous_binding_analysis()
         num_ads_cells, gridN_x, gridN_y, gridN_z, ads_layer,...
         velocity_profile, D_coeff, ru_to_m);
     
-    % Step 2: Constrained heterogeneous inversion
-    fprintf('\n=== Step 2: Heterogeneous inversion with constraints ===\n');
+    % Step 2: Theorem-constrained inversion
+    fprintf('\n=== Step 2: Theorem-constrained inversion ===\n');
     [p_opt, animation_data] = solve_constrained_inversion(...
         homog_params, s_obs, gridN_x, gridN_y, gridN_z,...
         ads_x_range, ads_y_range, ads_layer, velocity_profile,...
         c0_assoc, c0_diss, t_association, t_dissociation,...
-        D_coeff, ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean);
+        D_coeff, ru_to_m, lambda_kon, lambda_koff, lambda_smax,...
+        lambda_alpha, lambda_gamma, lambda_mean);
 
     % ================ VISUALIZATION ================
     generate_results_animation(animation_data, true_kon_grid,...
@@ -149,12 +154,12 @@ function cost = homogeneous_cost(p, t, s_obs, c0_assoc, t_assoc, t_diss,...
     cost = norm(s_obs - s_fit);
 end
 
-%% Constrained heterogeneous inversion
+%% Enhanced Constrained Inversion
 function [p_opt, animation_data] = solve_constrained_inversion(...
     homog_params, s_obs, gridN_x, gridN_y, gridN_z,...
     ads_x_range, ads_y_range, ads_layer, velocity_profile,...
     c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m,...
-    lambda_kon, lambda_koff, lambda_smax, lambda_mean)
+    lambda_kon, lambda_koff, lambda_smax, lambda_alpha, lambda_gamma, lambda_mean)
     
     % Parameter setup
     ads_x_cells = ads_x_range(1):ads_x_range(2);
@@ -182,36 +187,26 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
     global animation_data;
     animation_data = struct('iter', {}, 'p', {}, 's_fit', {});
     
-    % Initial evaluation
-    [~, s_fit_initial] = constrained_cost(p0, s_obs, homog_params,...
-        gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
-        velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean);
-    
-    animation_data(1).p = p0;
-    animation_data(1).s_fit = s_fit_initial;
-    animation_data(1).iter = 0;
-
     % Optimization options
     options = optimoptions('fmincon', 'Display', 'iter',...
         'Algorithm', 'interior-point', 'MaxIterations', 200,...
         'UseParallel', true, 'OutputFcn', @outputfun,'MaxFunctionEvaluations',10000);
     
     % Run optimization
-    p_opt = fmincon(@(p) constrained_cost(p, s_obs, homog_params,...
+    p_opt = fmincon(@(p) theorem_constrained_cost(p, s_obs, homog_params,...
         gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
         velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean),...
-        p0, [], [], [], [], lb, ub, [], options);
+        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_alpha,...
+        lambda_gamma, lambda_mean), p0, [], [], [], [], lb, ub, [], options);
 
     % Nested output function
     function stop = outputfun(p, optimValues, state)
         stop = false;
         if strcmp(state, 'iter')
-            [~, s_fit] = constrained_cost(p, s_obs, homog_params,...
+            [~, s_fit] = theorem_constrained_cost(p, s_obs, homog_params,...
                 gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
                 velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-                ru_to_m, 0, 0, 0, 0); % No reg for visualization
+                ru_to_m, 0, 0, 0, 0, 0, 0); % No reg for visualization
             
             current_iter = optimValues.iteration + 1;
             animation_data(end+1).p = p;
@@ -221,10 +216,12 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
     end
 end
 
-function [cost, s_fit] = constrained_cost(p, s_obs, homog_params,...
+
+%% Theorem-Constrained Cost Function
+function [cost, s_fit] = theorem_constrained_cost(p, s_obs, homog_params,...
     gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
     velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-    ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean)
+    ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_alpha, lambda_gamma, lambda_mean)
     
     % Split parameters
     num_ads_cells = length(ads_x_range(1):ads_x_range(2)) * ...
@@ -263,21 +260,20 @@ function [cost, s_fit] = constrained_cost(p, s_obs, homog_params,...
     reg_koff = lambda_koff * norm(diff(koff_params))^2;
     reg_smax = lambda_smax * norm(diff(smax_params))^2;
     
-    % Constraint terms
-    mean_kon = mean(kon_vals);
-    mean_koff = mean(koff_vals);
-    sum_smax = sum(smax_vals);
+    % Composite parameter terms (Theorem-based)
+    alpha_vals = kon_vals .* smax_vals;
+    gamma_vals = koff_vals ./ kon_vals;
+    reg_alpha = lambda_alpha * norm(diff(alpha_vals))^2;
+    reg_gamma = lambda_gamma * norm(diff(gamma_vals))^2;
     
-    target_kon = homog_params(1); 
-    target_koff = homog_params(2);
-    target_smax = homog_params(3);
-    
-    constraint_kon = lambda_mean * (mean_kon - target_kon)^2;
-    constraint_koff = lambda_mean * (mean_koff - target_koff)^2;
-    constraint_smax = lambda_mean * (sum_smax - target_smax)^2;
+    % Mean value constraints
+    constraint_kon = lambda_mean * (mean(kon_vals) - homog_params(1))^2;
+    constraint_koff = lambda_mean * (mean(koff_vals) - homog_params(2))^2;
+    constraint_smax = lambda_mean * (sum(smax_vals) - homog_params(3))^2;
     
     % Total cost
     cost = misfit + reg_kon + reg_koff + reg_smax + ...
+           reg_alpha + reg_gamma + ...
            constraint_kon + constraint_koff + constraint_smax;
 end
 
@@ -286,7 +282,7 @@ function generate_results_animation(animation_data, true_kon_grid,...
     true_koff_grid, true_smax_grid, t, s_obs)
     
     fprintf('\nGenerating results animation...\n');
-    video_filename = 'constrained_inversion.mp4';
+    video_filename = 'constrained_inversion_other.mp4';
     v = VideoWriter(video_filename, 'MPEG-4');
     v.FrameRate = 2;
     open(v);
