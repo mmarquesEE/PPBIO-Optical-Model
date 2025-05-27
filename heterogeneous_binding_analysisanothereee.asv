@@ -407,7 +407,7 @@ function [t, c_s, s, K] = simulate_3d_flow_model(nx, ny, nz, kon_grid, koff_grid
 
     
     % Solve ODE for association phase
-    options = odeset('RelTol',1e-3, 'AbsTol',1e-5);
+    options = odeset('RelTol',1e-2, 'AbsTol',1e-4);
     [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0_assoc, D_coeff, ru_to_m), tspan_assoc, y0, options);
     
     % Reset for dissociation phase

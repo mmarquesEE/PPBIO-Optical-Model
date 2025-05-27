@@ -1,0 +1,208 @@
+%% KERNEL VALIDATION SCRIPT
+function validate_kernel_implementation()
+    clearvars; close all; clc;
+    % Shared parameters
+    gridN_x = 25; gridN_y = 5; gridN_z = 3;
+    ads_layer = 1;
+    ads_x_range = [10,14]; ads_y_range = [2,4];
+    num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
+    
+    % Homogeneous parameters (from step 1 results)
+    homog_params = [9.4e3, 0.0078, 1.0]; % kon, koff, smax_total
+    
+    % 1. Homogeneous Kernel Calculation
+    [K_homog, t_homog] = simulate_homogeneous_kernel(homog_params, gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
+    
+    % 2. Heterogeneous Kernel Calculation (known parameters)
+    [kon_grid, koff_grid, smax_grid] = create_ground_truth_heterogeneity(gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
+    [K_heterog, t_heterog] = simulate_heterogeneous_kernel(kon_grid, koff_grid, smax_grid, gridN_x, gridN_y, gridN_z);
+    
+    % 3. Composite Behavior Comparison
+    compare_composite_behavior(K_homog, K_heterog, t_homog, t_heterog,...
+        kon_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer),...
+        koff_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer),...
+        smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer),...
+        homog_params, num_ads_cells,ads_x_range, ads_y_range, ads_layer);
+end
+
+%% Helper Functions
+function [kon_grid, koff_grid, smax_grid] = create_homogeneous_grids(params, nx, ny, nz, ads_x_range, ads_y_range, ads_layer)
+    % Create uniform parameter grids
+    kon_grid = zeros(nx, ny, nz);
+    koff_grid = zeros(nx, ny, nz);
+    smax_grid = zeros(nx, ny, nz);
+    
+    kon = params(1);
+    koff = params(2);
+    smax_total = params(3);
+    smax_per_cell = smax_total / ((ads_x_range(2)-ads_x_range(1)+1)*(ads_y_range(2)-ads_y_range(1)+1));
+    
+    kon_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = kon;
+    koff_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = koff;
+    smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = smax_per_cell;
+end
+
+function velocity_profile = create_velocity_profile(nz, max_velocity)
+    z_indices = 0:(nz-1);
+    h = nz-1;
+    velocity_profile = 4 * max_velocity * (z_indices/h) .* (1 - z_indices/h);
+    velocity_profile = reshape(velocity_profile, [1,1,nz]);
+end
+
+function [K_homog, t_homog] = simulate_homogeneous_kernel(params, nx, ny, nz, ads_x_range, ads_y_range, ads_layer)
+    [kon_grid, koff_grid, smax_grid] = create_homogeneous_grids(params, nx, ny, nz, ads_x_range, ads_y_range, ads_layer);
+    velocity_profile = create_velocity_profile(nz, 8.3);
+    
+    [t_homog, ~, ~, K_homog] = simulate_3d_flow_model(...
+        nx, ny, nz, kon_grid, koff_grid, smax_grid,...
+        velocity_profile, 3.3e-6, 0, 800, 1200, 6e-3, 1e-6);
+end
+
+function [kon_grid, koff_grid, smax_grid] = create_ground_truth_heterogeneity(nx, ny, nz, ads_x_range, ads_y_range, ads_layer)
+    kon_base = 9.4e3;
+    koff_base = 0.0078;
+    smax_total = 1.0;
+    num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
+    
+    % Initialize grids
+    kon_grid = zeros(nx, ny, nz);
+    koff_grid = zeros(nx, ny, nz);
+    smax_grid = zeros(nx, ny, nz);
+    
+    % Add 5% variation to adsorption region
+    rng(42); % For reproducibility
+    kon_vals = kon_base * (1 + 0.05*randn(ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1));
+    koff_vals = koff_base * (1 + 0.05*randn(size(kon_vals)));
+    smax_vals = (smax_total/num_ads_cells) * ones(size(kon_vals));
+    
+    kon_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = kon_vals;
+    koff_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = koff_vals;
+    smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = smax_vals;
+end
+
+function [K_heterog, t_heterog] = simulate_heterogeneous_kernel(kon_grid, koff_grid, smax_grid, nx, ny, nz)
+    velocity_profile = create_velocity_profile(nz, 8.3);
+    [t_heterog, ~, ~, K_heterog] = simulate_3d_flow_model(...
+        nx, ny, nz, kon_grid, koff_grid, smax_grid,...
+        velocity_profile, 3.3e-6, 0, 800, 1200, 6e-3, 1e-6);
+end
+
+function compare_composite_behavior(K_homog, K_heterog, t_homog, t_heterog, kon_heterog, koff_heterog, smax_heterog, homog_params, num_ads_cells,ads_x_range, ads_y_range, ads_layer)
+    % Homogeneous composite term
+    alpha_homog = homog_params(1) * homog_params(3);
+    sum_alphaK_homog = alpha_homog * squeeze(mean(K_homog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer), [2,3,4])); % Sum over all cells
+    
+    % Heterogeneous composite term
+    alpha_heterog = kon_heterog .* smax_heterog;
+    
+    % Extract adsorption region from K_heterog
+    ads_cells_K = K_heterog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer, :);
+    
+    % Reshape alpha_heterog to [1, nx_ads, ny_ads, 1] for broadcasting
+    alpha_heterog_reshaped = reshape(alpha_heterog, [1, size(alpha_heterog)]);
+    
+    % Calculate composite sum
+    sum_alphaK_heterog = squeeze(sum(alpha_heterog_reshaped .* ads_cells_K, [2,3,4]));
+    
+    % Interpolate to common timebase
+    t_common = linspace(0, 1200, 1000);
+    sum_homog_interp = interp1(t_homog, sum_alphaK_homog, t_common, 'linear', 'extrap');
+    sum_heterog_interp = interp1(t_heterog, sum_alphaK_heterog, t_common, 'linear', 'extrap');
+    
+    % Calculate discrepancy
+    discrepancy = trapz(t_common, (sum_homog_interp - sum_heterog_interp).^2);
+    fprintf('Composite kernel discrepancy: %.2e\n', discrepancy);
+    
+    % Plot results
+    figure;
+    plot(t_common, sum_homog_interp, 'b-', 'LineWidth', 2); hold on;
+    plot(t_common, sum_heterog_interp, 'r--', 'LineWidth', 1.5);
+    xlabel('Time (s)'); ylabel('\Sigma(\alpha K)');
+    legend('Homogeneous', 'Heterogeneous (5% var)');
+    title(sprintf('Composite Kernel Comparison\nDiscrepancy: %.2e', discrepancy));
+    grid on;
+end
+
+function [t, c_s, s, K] = simulate_3d_flow_model(nx, ny, nz, kon_grid, koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m)
+    % Initialize concentrations and auxiliary variables
+    c_s = zeros(nx, ny, nz);
+    c_s(1, :, :) = c0_assoc;
+    s = zeros(nx, ny, nz);
+    Q = zeros(nx, ny, nz);
+    R = zeros(nx, ny, nz);
+    y0 = [c_s(:); s(:); Q(:); R(:)];
+
+    % Time parameters
+    tspan_assoc = linspace(0, t_assoc, 100);
+    tspan_diss = linspace(t_assoc, t_total, 100);
+    
+    % Solve ODE for association phase
+    options = odeset('RelTol',1e-5,'AbsTol',1e-7);
+    [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0_assoc, D_coeff, ru_to_m), tspan_assoc, y0, options);
+    
+    % Reset for dissociation phase
+    y_end_assoc = y_assoc(end,:)';
+    num_cells = nx*ny*nz;
+    c_s_end = reshape(y_end_assoc(1:num_cells), [nx, ny, nz]);
+    s_end = reshape(y_end_assoc(num_cells+1:2*num_cells), [nx, ny, nz]);
+    c_s_end(1, :, :) = c0_diss;
+    y0_diss = [c_s_end(:); s_end(:); y_end_assoc(2*num_cells+1:end)]; % Preserve Q/R
+    
+    % Solve ODE for dissociation phase
+    [t_diss, y_diss] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0_diss, D_coeff, ru_to_m), tspan_diss, y0_diss, options);
+    
+    % Combine results
+    t = [t_assoc; t_diss(2:end)];
+    y = [y_assoc; y_diss(2:end,:)];
+    
+    % Extract variables
+    c_s = reshape(y(:,1:num_cells), [length(t), nx, ny, nz]);
+    s = reshape(y(:,num_cells+1:2*num_cells), [length(t), nx, ny, nz]);
+    Q = reshape(y(:,2*num_cells+1:3*num_cells), [length(t), nx, ny, nz]);
+    R = reshape(y(:,3*num_cells+1:end), [length(t), nx, ny, nz]);
+    
+    % Compute kernel K(x,y,t) = exp(-Q) .* R
+    K = exp(-Q) .* R;
+end
+
+function dydt = ode_system(t, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m)
+    % Reshape state variables
+    num_cells = nx * ny * nz;
+    c_s = reshape(y(1:num_cells), [nx, ny, nz]);
+    s = reshape(y(num_cells + 1:2*num_cells), [nx, ny, nz]);       % Corrected indices for s
+    Q = reshape(y(2*num_cells + 1:3*num_cells), [nx, ny, nz]);    % Corrected indices for Q
+    R = reshape(y(3*num_cells + 1:4*num_cells), [nx, ny, nz]); 
+    dcsdt = zeros(nx, ny, nz);
+    dsdt = zeros(nx, ny, nz);
+
+    % Diffusion terms
+    d2c_dx2 = zeros(nx, ny, nz);
+    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:));
+    
+    d2c_dz2 = zeros(nx, ny, nz);
+    d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
+    d2c_dz2(:,:,1) = c_s(:,:,2) - 2*c_s(:,:,1) + c_s(:,:,1);
+    d2c_dz2(:,:,end) = c_s(:,:,end-1) - 2*c_s(:,:,end) + c_s(:,:,end-1);
+    
+    dcsdt = D_coeff * (d2c_dx2 + d2c_dz2);
+    
+    % Advection
+    dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + ...
+        bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
+    
+    % Adsorption kinetics with surface capacity constraint
+    available_sites = max(smax_grid - s, 0);
+    dsdt = kon_grid .* c_s .* available_sites - koff_grid .* s;
+    dcsdt = dcsdt - (dsdt * ru_to_m);
+    
+    % Inlet boundary condition (x=1)
+    c_s(1,:,:) = c0;
+    dcsdt(1,:,:) = 0;
+    
+    % Compute dQ/dt and dR/dt
+    dQdt = kon_grid .* c_s + koff_grid;
+    dRdt = c_s .* exp(Q);
+
+    % Combine all derivatives
+    dydt = [dcsdt(:); dsdt(:); dQdt(:); dRdt(:)];
+end
