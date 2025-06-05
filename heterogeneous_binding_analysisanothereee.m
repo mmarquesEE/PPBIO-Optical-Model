@@ -20,12 +20,10 @@ function heterogeneous_binding_analysis()
     ru_to_m = 1e-6;        % RU conversion
     
     % Regularization parameters
-    lambda_kon = 1e-2;
-    lambda_koff = 1e-2;
-    lambda_smax = 1e-2;
-    lambda_alpha = 1e-2;  % Composite binding rate regularization
-    lambda_gamma = 1e-2;  % Dissociation ratio regularization
-    lambda_mean = 1;     % Constraint strength
+    lambda_kon = 1e-3;
+    lambda_koff = 1e-3;
+    lambda_smax = 1e-3;
+    lambda_mean = 10;     % Constraint strength
 
     % Flow parameters
     velocity_profile = create_velocity_profile(gridN_z, 8.3);
@@ -97,7 +95,7 @@ function heterogeneous_binding_analysis()
         ads_x_range, ads_y_range, ads_layer, velocity_profile,...
         c0_assoc, c0_diss, t_association, t_dissociation,...
         D_coeff, ru_to_m, lambda_kon, lambda_koff, lambda_smax,...
-        lambda_alpha, lambda_gamma, lambda_mean);
+        lambda_mean);
 
     % ================ VISUALIZATION ================
     generate_results_animation(animation_data, true_kon_grid,...
@@ -119,7 +117,7 @@ function homog_params = estimate_homogeneous_parameters(t, s_obs, c0_assoc,...
         ads_layer, velocity_profile, D_coeff, ru_to_m);
     
     % Optimization
-    options = optimoptions('fmincon', 'Display', 'iter', 'UseParallel',true,'MaxIterations', 20);
+    options = optimoptions('fmincon', 'Display', 'iter', 'UseParallel',true,'MaxIterations', 3);
     homog_params = fmincon(cost_func, [9.4e3, 0.0078, 1.0], [], [], [], [], lb, ub, [], options);
     
     fprintf('Homogeneous parameters estimated:\n');
@@ -161,7 +159,7 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
     homog_params, s_obs, gridN_x, gridN_y, gridN_z,...
     ads_x_range, ads_y_range, ads_layer, velocity_profile,...
     c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m,...
-    lambda_kon, lambda_koff, lambda_smax, lambda_alpha, lambda_gamma, lambda_mean)
+    lambda_kon, lambda_koff, lambda_smax, lambda_mean)
     
     % Parameter setup
     ads_x_cells = ads_x_range(1):ads_x_range(2);
@@ -191,15 +189,14 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
     
     % Optimization options
     options = optimoptions('fmincon', 'Display', 'iter',...
-        'Algorithm', 'interior-point', 'MaxIterations', 20,...
+        'Algorithm', 'interior-point', 'MaxIterations', 10,...
         'UseParallel', true, 'OutputFcn', @outputfun,'MaxFunctionEvaluations',10000);
     
     % Run optimization
     p_opt = fmincon(@(p) theorem_constrained_cost(p, s_obs, homog_params,...
         gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
         velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_alpha,...
-        lambda_gamma, lambda_mean), p0, [], [], [], [], lb, ub, [], options);
+        ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean), p0, [], [], [], [], lb, ub, [], options);
 
     % Nested output function
     function stop = outputfun(p, optimValues, state)
@@ -208,7 +205,7 @@ function [p_opt, animation_data] = solve_constrained_inversion(...
             [~, s_fit] = theorem_constrained_cost(p, s_obs, homog_params,...
                 gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer,...
                 velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff,...
-                ru_to_m, 0, 0, 0, 0, 0, 0); % No reg for visualization
+                ru_to_m, 0, 0, 0, 0); % No reg for visualization
             
             current_iter = optimValues.iteration + 1;
             animation_data(end+1).p = p;
@@ -238,7 +235,7 @@ function [K_homog, t_homog] = precompute_homogeneous_kernel(homog_params, gridN_
     [t_homog, ~, ~, K_homog] = simulate_3d_flow_model(gridN_x, gridN_y, gridN_z, kon_grid, koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m);
 end
 %% Theorem-Constrained Cost Function
-function [cost, s_fit] = theorem_constrained_cost(p, s_obs, homog_params, gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer, velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_alpha, lambda_gamma, lambda_mean)
+function [cost, s_fit] = theorem_constrained_cost(p, s_obs, homog_params, gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer, velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m, lambda_kon, lambda_koff, lambda_smax, lambda_mean)
     persistent K_homog  % Precompute once and reuse
     
     % Split parameters (unchanged)
@@ -281,7 +278,7 @@ function [cost, s_fit] = theorem_constrained_cost(p, s_obs, homog_params, gridN_
     sum_alphaK_homog = alpha_homog/num_ads_cells * squeeze(sum(K_homog(:, ads_x_cells, ads_y_cells, ads_layer), [2, 3, 4]));
     
     % Kernel misfit term (integrate squared difference over time)
-    kernel_misfit = trapz(t_heterog, (sum_alphaK_heterog - sum_alphaK_homog).^2);
+    kernel_misfit = trapz(t_heterog, (sum_alphaK_heterog - sum_alphaK_homog).^2)/ max(t_heterog);
     
     % Original misfit and regularization terms
     s_fit = squeeze(sum(s(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer), [2,3,4]));
@@ -299,7 +296,7 @@ function generate_results_animation(animation_data, true_kon_grid,...
     true_koff_grid, true_smax_grid, t, s_obs)
     
     fprintf('\nGenerating results animation...\n');
-    video_filename = 'constrained_inversion_other.mp4';
+    video_filename = 'constrained_inversion_other2.mp4';
     v = VideoWriter(video_filename, 'MPEG-4');
     v.FrameRate = 2;
     open(v);
@@ -407,7 +404,7 @@ function [t, c_s, s, K] = simulate_3d_flow_model(nx, ny, nz, kon_grid, koff_grid
 
     
     % Solve ODE for association phase
-    options = odeset('RelTol',1e-3, 'AbsTol',1e-5);
+    options = odeset('RelTol',1e-5, 'AbsTol',1e-7);
     [t_assoc, y_assoc] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0_assoc, D_coeff, ru_to_m), tspan_assoc, y0, options);
     
     % Reset for dissociation phase

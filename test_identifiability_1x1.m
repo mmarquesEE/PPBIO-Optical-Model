@@ -1,3 +1,146 @@
+function test_identifiability_1x1()
+    % Set adsorption region to 1x1 (single cell)
+    gridN_x = 25; gridN_y = 5; gridN_z = 3;
+    ads_layer = 1;
+    ads_x_range = [10, 10]; ads_y_range = [2, 2]; % Single cell
+    num_ads_cells = 1;
+
+    % Ground truth parameters (homogeneous)
+    kon_truth = 9.4e3;      % M^{-1}s^{-1}
+    koff_truth = 0.0078;    % s^{-1}
+    smax_truth = 1.0;       % RU
+    kd_truth = koff_truth / kon_truth;  % M
+
+    % Experiment setup
+    vmax_base = 8.3;        % mm/s
+    D_coeff = 3.3e-6;       % m^2/s
+    t_assoc = 800;          % s
+    t_total = 1200;         % s
+    ru_to_m = 1e-6;         % m/RU
+
+    % Define three experiments (conditions from Condition 1)
+    % Exp 1: Low concentration (0.1 * kd)
+    c0_assoc1 = 0.1 * kd_truth;
+    c0_diss1 = 0;
+    
+    % Exp 2: Saturating concentration (2 * kd)
+    c0_assoc2 = 2 * kd_truth;
+    c0_diss2 = 0;
+    
+    % Exp 3: Increased flow rate (2x)
+    c0_assoc3 = c0_assoc1;  % Same as Exp 1
+    c0_diss3 = 0;
+    vmax3 = 2 * vmax_base;  % Double flow rate
+
+    % Parameters to perturb [kon, koff, smax]
+    param_names = {'kon', 'koff', 'smax'};
+    params_truth = [kon_truth, koff_truth, smax_truth];
+    num_params = length(params_truth);
+    delta = 1e-5;  % Relative perturbation
+
+    % Preallocate Jacobian (each experiment contributes 10 time points)
+    n_time_points = 10;
+    J = zeros(3 * n_time_points, num_params);
+    
+    % Ground truth sensorgrams for all experiments (for reuse)
+    s_obs_truth_exp = cell(3, 1);
+    t_exp = cell(3, 1);
+    
+    % Simulate ground truth for each experiment
+    for exp_idx = 1:3
+        % Set experiment-specific conditions
+        if exp_idx == 1
+            c0_assoc = c0_assoc1; c0_diss = c0_diss1; vmax = vmax_base;
+        elseif exp_idx == 2
+            c0_assoc = c0_assoc2; c0_diss = c0_diss2; vmax = vmax_base;
+        else
+            c0_assoc = c0_assoc3; c0_diss = c0_diss3; vmax = vmax3;
+        end
+        
+        % Create parameter grids (only adsorption cell active)
+        [kon_grid, koff_grid, smax_grid] = create_param_grids(...
+            gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer, ...
+            kon_truth, koff_truth, smax_truth);
+        
+        % Simulate
+        velocity_profile = create_velocity_profile(gridN_z, vmax);
+        s0_grid = zeros(gridN_x, gridN_y, gridN_z); % Initial s=0
+        [t_truth, ~, s_truth, ~, ~] = simulate_3d_flow_model(...
+            gridN_x, gridN_y, gridN_z, kon_grid, koff_grid, smax_grid, ...
+            velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m, s0_grid);
+        
+        % Extract observed sensorgram (sum over adsorption region)
+        s_obs_truth = squeeze(sum(sum(s_truth(:, ads_x_range(1):ads_x_range(2), ...
+            ads_y_range(1):ads_y_range(2), ads_layer), [2,3,4])));
+        s_obs_truth_exp{exp_idx} = s_obs_truth;
+        t_exp{exp_idx} = t_truth;
+    end
+
+    % Compute Jacobian: perturb each parameter
+    for p_idx = 1:num_params
+        % Perturb parameter p_idx
+        params_pert = params_truth;
+        params_pert(p_idx) = params_pert(p_idx) * (1 + delta);
+        
+        for exp_idx = 1:3
+            % Set experiment conditions
+            if exp_idx == 1
+                c0_assoc = c0_assoc1; c0_diss = c0_diss1; vmax = vmax_base;
+            elseif exp_idx == 2
+                c0_assoc = c0_assoc2; c0_diss = c0_diss2; vmax = vmax_base;
+            else
+                c0_assoc = c0_assoc3; c0_diss = c0_diss3; vmax = vmax3;
+            end
+            
+            % Create grids with perturbed parameter
+            [kon_grid, koff_grid, smax_grid] = create_param_grids(...
+                gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer, ...
+                params_pert(1), params_pert(2), params_pert(3));
+            
+            % Simulate perturbed system
+            velocity_profile = create_velocity_profile(gridN_z, vmax);
+            s0_grid = zeros(gridN_x, gridN_y, gridN_z);
+            [t_pert, ~, s_pert, ~, ~] = simulate_3d_flow_model(...
+                gridN_x, gridN_y, gridN_z, kon_grid, koff_grid, smax_grid, ...
+                velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m, s0_grid);
+            
+            % Extract perturbed sensorgram
+            s_obs_pert = squeeze(sum(sum(s_pert(:, ads_x_range(1):ads_x_range(2), ...
+                ads_y_range(1):ads_y_range(2), ads_layer), [2,3,4])));
+            
+            % Interpolate to fixed time points
+            time_points = linspace(0, t_total, n_time_points);
+            s_truth_interp = interp1(t_exp{exp_idx}, s_obs_truth_exp{exp_idx}, time_points);
+            s_pert_interp = interp1(t_pert, s_obs_pert, time_points);
+            
+            % Finite-difference derivative
+            deriv = (s_pert_interp - s_truth_interp) / (delta * params_truth(p_idx));
+            
+            % Store in Jacobian
+            rows = (exp_idx-1)*n_time_points + (1:n_time_points);
+            J(rows, p_idx) = deriv';
+        end
+    end
+
+    % Check rank of Jacobian (should be 3)
+    jacobian_rank = rank(J);
+    fprintf('Jacobian rank: %d (expected: 3)\n', jacobian_rank);
+    
+    % Singular values (all should be >0)
+    sv = svd(J);
+    fprintf('Singular values: %s\n', mat2str(sv, 4));
+end
+
+function [kon_grid, koff_grid, smax_grid] = create_param_grids(nx, ny, nz, ads_x, ads_y, layer, kon, koff, smax)
+    kon_grid = zeros(nx, ny, nz);
+    koff_grid = zeros(nx, ny, nz);
+    smax_grid = zeros(nx, ny, nz);
+    kon_grid(ads_x(1):ads_x(2), ads_y(1):ads_y(2), layer) = kon;
+    koff_grid(ads_x(1):ads_x(2), ads_y(1):ads_y(2), layer) = koff;
+    smax_grid(ads_x(1):ads_x(2), ads_y(1):ads_y(2), layer) = smax;
+end
+
+
 %% KERNEL VALIDATION SCRIPT
 function validate_kernel_implementation()
     clearvars; close all; clc;
@@ -112,8 +255,8 @@ function compare_composite_behavior(s_homog, s_heterog, Q_homog, Q_heterog, K_ho
     ads_cells_K_heterog = K_heterog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
     
     % Get initial surface concentration (t=0)
-    s0_homog_ads = squeeze(ads_cells_s_homog(1, :, :, :));
-    s0_heterog_ads = squeeze(ads_cells_s_heterog(1, :, :, :));
+    s0_homog_ads = ads_cells_s_homog(1, :, :, :);
+    s0_heterog_ads = ads_cells_s_heterog(1, :, :, :);
     
     % Compute alpha (kon * smax) for each cell
     alpha_homog_ads = kon_homog * smax_per_cell * ones(size(kon_heterog_ads));
@@ -122,9 +265,7 @@ function compare_composite_behavior(s_homog, s_heterog, Q_homog, Q_heterog, K_ho
     % Reshape alpha arrays for broadcasting (s0 arrays remain as [1, dx, dy])
     alpha_homog_ads = reshape(alpha_homog_ads, [1, size(alpha_homog_ads)]);
     alpha_heterog_ads = reshape(alpha_heterog_ads, [1, size(alpha_heterog_ads)]);
-    s0_homog_ads = reshape(s0_homog_ads, [1, size(s0_homog_ads)]);
-    s0_heterog_ads = reshape(s0_heterog_ads, [1, size(s0_heterog_ads)]);
-
+    
     % Compute decay term: s0 * exp(-Q)
     decay_term_homog = s0_homog_ads .* exp(-ads_cells_Q_homog);
     decay_term_heterog = s0_heterog_ads .* exp(-ads_cells_Q_heterog);
