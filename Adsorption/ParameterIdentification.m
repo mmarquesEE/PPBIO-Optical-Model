@@ -3,7 +3,7 @@ function validate_kernel_implementation_with_experiments()
     % Shared parameters
     gridN_x = 10; gridN_y = 5; gridN_z = 3;
     ads_layer = 1;
-    ads_x_range = [5,5]; ads_y_range = [2,2];
+    ads_x_range = [5,5]; ads_y_range = [2,3];
     num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
     
     % Homogeneous parameters
@@ -16,26 +16,33 @@ function validate_kernel_implementation_with_experiments()
     base_max_velocity = 8.3;
     
     % Example pulse parameters
+    n_exp = 1;
+    % Base parameters
+    base_max_velocity = 8.3;
     T1 = 800; T2 = 1600; T3 = 2400;
-    c1 = 3.3e-6; c2 = 1e-6; c_diss = 0;
-    
-    % Experiment settings
-    exp_settings = struct(...
-        'pulse_times', { [T1, T2, T3], [T1, T2, T3], [T1, T2, T3] }, ...
-        'pulse_concs', { [c1, 0, c2], [c1, 0, 2*c2], [2*c1, 0, c2] }, ...
-        't_total', {3200, 3200, 3200}, ...
-        'max_velocity', {base_max_velocity, 2*base_max_velocity, 0.5*base_max_velocity}, ...
-        'c_diss', {c_diss, c_diss, c_diss} ...
-    );
+    t_total = 3200;
+    c_diss = 0;
+    c1 = 3.3e-6;
+    c2 = 1e-6;
+
+    % Generate 12 orthogonal experiments
+    exp_settings = generate_experiments(n_exp, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2);
+
+    % Display generated experiments
+    for i = 1:length(exp_settings)
+        fprintf('\nExperiment %d:\n', i);
+        fprintf('  Concentrations: [%.2e, %.2e, %.2e]\n', exp_settings(i).pulse_concs);
+        fprintf('  Velocity: %.2f\n', exp_settings(i).max_velocity);
+    end
     
     % Create heterogeneous parameters
     [kon_grid_heterog, koff_grid_heterog, smax_grid_heterog] = ...
         create_ground_truth_heterogeneity(gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
     
     % Preallocate for identifiability analysis
-    s_obs_final_base = zeros(3,1); % Final s_obs values for baseline (each experiment)
+    s_obs_final_base = zeros(n_exp,1); % Final s_obs values for baseline (each experiment)
     
-    for exp_idx = 1:3
+    for exp_idx = 1:n_exp
         setting = exp_settings(exp_idx);
         fprintf('\nRunning Experiment %d\n', exp_idx);
         
@@ -184,7 +191,7 @@ function validate_kernel_implementation_with_experiments()
     % Preallocate combined Jacobian
     J_combined = [];
     
-    for exp_idx = 1:3
+    for exp_idx = 1:n_exp
         setting = exp_settings(exp_idx);
         fprintf('Computing Jacobian for Experiment %d...\n', exp_idx);
         
@@ -269,17 +276,15 @@ function validate_kernel_implementation_with_experiments()
         sprintf('Rank = %d/%d\nCond = %.1e', rankJ, N_params, cond_number), ...
         'FitBoxToText', 'on', 'BackgroundColor', 'white');
     
-    % ============== ENHANCED PARAMETER IDENTIFICATION ================
-    fprintf('\nStarting Enhanced Parameter Identification...\n');
-    
+    % ============== ENHANCED PARAMETER IDENTIFICATION ================    
     % Extract true heterogeneous parameters
     true_kon = kon_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
     true_koff = koff_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
     true_smax = smax_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
     
     % Generate "experimental" data from true parameters
-    exp_data = cell(3,1);
-    for exp_idx = 1:3
+    exp_data = cell(n_exp,1);
+    for exp_idx = 1:n_exp
         setting = exp_settings(exp_idx);
         [t, s_obs] = run_single_experiment(...
             gridN_x, gridN_y, gridN_z, true_kon, true_koff, true_smax,...
@@ -312,126 +317,253 @@ function validate_kernel_implementation_with_experiments()
           repmat(ub_koff, num_ads_cells, 1); ...
           repmat(ub_smax, num_ads_cells, 1)];
     
-    % Optimization options
+    % --- Tikhonov Regularization Setup ---
+    lambda_tikhonov = 1e-3; % EXAMPLE: Regularization strength. Needs tuning!
+                           % Start small (e.g., 1e-4, 1e-3) and increase if needed.
+                           % If condition number from OED was ~1e5, lambda might be around 1/sqrt(cond_num) or 1/cond_num as a heuristic starting point for J'J + lambda^2 I
+                           % but here it's on parameters directly.
+
+    % Define reference parameters (p0) for regularization. 
+    % This is often the initial guess or a vector of zeros if penalizing magnitude.
+    % Since we use log_params, log_params_ref should also be in log space.
+    % Using the initial guess p0 (which is already in log space) as log_params_ref:
+    log_params_ref_for_reg = p0; 
+    
+    % Define L_matrix (Tikhonov matrix)
+    % Option 1: L = Identity (standard Tikhonov, penalizes deviation from p0)
+    L_matrix_reg = eye(N_params); % N_params is length(p_true) or length(p0)
+    
+    % Option 2: L is a derivative operator (for spatial smoothness, if params are spatially ordered)
+    % This is more complex. If your N_params come from flattening a 2D grid of parameters
+    % for EACH of kon, koff, smax, you might want smoothness within each parameter type's grid.
+    % For simplicity, let's stick with L=Identity for now.
+    % If you want smoothness, you'd construct L to approximate, e.g.,
+    % grad_kon_x, grad_kon_y, grad_koff_x, grad_koff_y, etc.
+    % L_matrix_reg = []; % To use identity if not defined
+
+    % --- Create a handle to the plotter function with all necessary data ---
+    model_config.gridN_x = gridN_x; model_config.gridN_y = gridN_y; model_config.gridN_z = gridN_z;
+    model_config.ads_x_range = ads_x_range; model_config.ads_y_range = ads_y_range; model_config.ads_layer = ads_layer;
+    model_config.D_coeff = D_coeff; model_config.ru_to_m = ru_to_m;
+    % Ensure this variable is available for error calculation
+    true_kon_ads_region_for_error = kon_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    true_koff_ads_region_for_error = koff_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    true_smax_ads_region_for_error = smax_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+
+    true_params_vec = [true_kon_ads_region_for_error(:); true_koff_ads_region_for_error(:); true_smax_ads_region_for_error(:)]; 
+    % --- Setup for Video Recording ---
+    video_filename = 'optimization_animation.mp4';
+    try
+        video_obj = VideoWriter(video_filename, 'MPEG-4');
+        video_obj.FrameRate = 5;  % Adjust FrameRate for desired speed (e.g., 5-10)
+        video_obj.Quality = 95; % Adjust Quality (0-100, higher is better)
+    catch ME
+        warning('VideoWriter could not be created. Video will not be saved. Error: %s', ME.message);
+        video_obj = []; % Set to empty if creation fails
+    end
+    optim_plot_fun = @(log_params, optimValues, state) optimPlotter(log_params, optimValues, state, ...
+                                                              true_params_vec, ...
+                                                              exp_data, ...
+                                                              exp_settings, ...
+                                                              model_config, ...
+                                                              size(true_kon), size(true_koff), size(true_smax), ...
+                                                              video_obj); % Pass the video object as the last argument
+
+    % --- Add the 'OutputFcn' to your optimization options ---
     optim_opts = optimoptions('lsqnonlin', ...
         'Algorithm', 'trust-region-reflective', ...
         'Display', 'iter', ...
-        'MaxIterations', 15, ...
-        'FunctionTolerance', 1e-6, ...
-        'StepTolerance', 1e-6, ...
-        'FiniteDifferenceType', 'central');
+        'MaxIterations', 50, ...
+        'FunctionTolerance', 1e-8, ...
+        'StepTolerance', 1e-8, ...
+        'UseParallel',true,...
+        'FiniteDifferenceType', 'central', ...
+        'OutputFcn', optim_plot_fun); % This now points to our video-enabled plotter
     
-    % Residual function
-    residual_fun = @(log_params) compute_residuals_log(...
-        log_params, exp_settings, exp_data, gridN_x, gridN_y, gridN_z, ...
-        ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m);
+    % Residual function with Tikhonov regularization
+    % Ensure n_exp is correctly passed (it's the number of experiments used for fitting)
+    num_fitting_experiments = n_exp; % Assuming you use all 'n_exp' for fitting
+
+    residual_fun_tikhonov = @(log_params) compute_residuals_log_tikhonov(...
+        log_params, exp_settings(1:num_fitting_experiments), exp_data(1:num_fitting_experiments), ... % Use only the selected/fitted experiments
+        gridN_x, gridN_y, gridN_z, ...
+        ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m, ...
+        num_fitting_experiments, ... % Pass n_exp correctly
+        lambda_tikhonov, log_params_ref_for_reg, L_matrix_reg); % Pass regularization params
+    
+    fprintf('\nStarting Enhanced Parameter Identification with Tikhonov Regularization (lambda=%.1e)...\n', lambda_tikhonov);
     
     % Run optimization in log space
-    [opt_log_params, ~, residual, exitflag] = lsqnonlin(...
-        residual_fun, p0, lb, ub, optim_opts);
+    [opt_log_params_reg, resnorm_reg, residual_reg, exitflag_reg] = lsqnonlin(...
+    residual_fun_tikhonov, p0, lb, ub, optim_opts);
     
     % Convert optimized parameters back to linear space
-    opt_params = 10.^opt_log_params;
+    opt_params_reg = 10.^opt_log_params_reg;
     
     % Split into parameter groups
-    opt_kon = opt_params(1:num_ads_cells);
-    opt_koff = opt_params(num_ads_cells+1:2*num_ads_cells);
-    opt_smax = opt_params(2*num_ads_cells+1:end);
+    opt_kon_reg = opt_params_reg(1:num_ads_cells);
+    opt_koff_reg = opt_params_reg(num_ads_cells+1:2*num_ads_cells);
+    opt_smax_reg = opt_params_reg(2*num_ads_cells+1:end);
     
     % Reshape to match adsorption region
-    opt_kon = reshape(opt_kon, size(true_kon));
-    opt_koff = reshape(opt_koff, size(true_koff));
-    opt_smax = reshape(opt_smax, size(true_smax));
+    opt_kon_reg = reshape(opt_kon_reg, size(true_kon));
+    opt_koff_reg = reshape(opt_koff_reg, size(true_koff));
+    opt_smax_reg = reshape(opt_smax_reg, size(true_smax));
     
-    % True parameters as vector for comparison
-    true_params_vec = [true_kon(:); true_koff(:); true_smax(:)];
+    % True parameters as vector for comparison (already have true_params_vec)
+    
+    % Analyze regularized results
+    fprintf('\nOptimization Results (Tikhonov Regularized):\n');
+    fprintf('Final Residual Norm (augmented): %.4e\n', norm(residual_reg)); % This includes reg term
+    % To get model-only residual norm:
+    num_model_residuals = length(residual_reg) - N_params; % If L=I
+    if lambda_tikhonov > 0 && size(L_matrix_reg,1) == N_params % Assuming L_matrix_reg results in N_params rows for reg term
+        model_only_resnorm = norm(residual_reg(1:num_model_residuals));
+        fprintf('Model-Data Residual Norm (unaugmented part): %.4e\n', model_only_resnorm);
+    end
+    fprintf('Exit Flag: %d\n', exitflag_reg);
+        
+    
+    % Calculate parameter errors for regularized solution
+    param_errors_reg = abs(opt_params_reg - true_params_vec) ./ true_params_vec;
+    fprintf('\nParameter Recovery Accuracy (Tikhonov Regularized):\n');
+    fprintf('Mean Relative Error: %.2f%%\n', 100*mean(param_errors_reg(~isinf(param_errors_reg) & ~isnan(param_errors_reg))));
+    fprintf('Max Relative Error: %.2f%%\n', 100*max(param_errors_reg(~isinf(param_errors_reg) & ~isnan(param_errors_reg))));
     init_params = 10.^p0; % Initial guess in linear space
-    
-    % Analyze results
-    fprintf('\nOptimization Results:\n');
-    fprintf('Final Residual Norm: %.4e\n', norm(residual));
-    fprintf('Exit Flag: %d\n', exitflag);
-    
-    % Calculate parameter errors
-    param_errors = abs(opt_params - true_params_vec) ./ true_params_vec;
-    fprintf('\nParameter Recovery Accuracy:\n');
-    fprintf('Mean Relative Error: %.2f%%\n', 100*mean(param_errors));
-    fprintf('Max Relative Error: %.2f%%\n', 100*max(param_errors));
-    
-    % Plot parameter recovery
-    plot_parameter_recovery(true_params_vec, opt_params, init_params, ...
+    % Plot parameter recovery for regularized solution
+    plot_parameter_recovery(true_params_vec, opt_params_reg, init_params, ... % init_params is 10.^p0
         size(true_kon), size(true_koff), size(true_smax));
-    
-    % Plot predicted vs "experimental" signals
-    plot_signal_predictions([opt_kon(:); opt_koff(:); opt_smax(:)], ...
-        exp_settings, exp_data, gridN_x, gridN_y, gridN_z, ...
-        ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m);
+    sgtitle('Parameter Recovery Results (Tikhonov Regularized)'); % Add to distinguish plot
+
+    % Plot predicted vs "experimental" signals using regularized parameters
+    plot_signal_predictions([opt_kon_reg(:); opt_koff_reg(:); opt_smax_reg(:)], ...
+        exp_settings(1:num_fitting_experiments), exp_data(1:num_fitting_experiments), ...
+        gridN_x, gridN_y, gridN_z, ...
+        ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m, num_fitting_experiments);
+    sgtitle('Signal Prediction vs Experimental Data (Tikhonov Regularized Parameters)');
+
 
 end
-
+function exp_settings = generate_experiments(M, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2)
+    % Generates M experiments with orthogonal concentration profiles and flow velocities
+    %
+    % Inputs:
+    %   M - Number of experiments
+    %   base_max_velocity - Reference flow velocity (e.g., 8.3)
+    %   T1, T2, T3 - Fixed pulse times
+    %   t_total - Total experiment duration
+    %   c_diss - Dissociation concentration
+    %   c1, c2 - Base concentrations
+    
+    exp_settings = struct(...
+        'pulse_times', {}, ...
+        'pulse_concs', {}, ...
+        't_total', {}, ...
+        'max_velocity', {}, ...
+        'c_diss', {} ...
+    );
+    
+    % Generate orthogonal concentration pairs using polar coordinates
+    angles = linspace(0, pi/2, M);  % Cover quadrant for positive concentrations
+    factors = linspace(0.3, 3, M);  % Concentration scaling factors
+    
+    for i = 1:M
+        if M ==1
+            M=2;
+        end
+        % Create orthogonal concentration profiles
+        conc_factor1 = factors(ceil(i/2)) * cos(angles(i));
+        conc_factor2 = factors(ceil(i/2)) * sin(angles(i));
+        
+        % Ensure minimum concentration variation
+        min_conc = 0.1 * min(c1, c2);
+        conc1 = max(c1 * (0.5 + conc_factor1), min_conc);
+        conc3 = max(c2 * (0.5 + conc_factor2), min_conc);
+        
+        % Create velocity profile (logarithmic spacing)
+        vel_min = 0.1 * base_max_velocity;
+        vel_max = 5.0 * base_max_velocity;
+        velocity = exp(log(vel_min) + (i-1)/(M-1) * (log(vel_max) - log(vel_min)));
+        
+        % Special patterns for every 3rd experiment
+        if mod(i,3) == 0
+            exp_settings(i).pulse_concs = [conc1, c2, conc3];  % Middle pulse active
+        elseif mod(i,4) == 0
+            exp_settings(i).pulse_concs = [c1, 0, conc3];      % First pulse fixed
+        else
+            exp_settings(i).pulse_concs = [conc1, 0, conc3];   % Standard pattern
+        end
+        
+        % Assign common parameters
+        exp_settings(i).pulse_times = [T1, T2, T3];
+        exp_settings(i).t_total = t_total;
+        exp_settings(i).max_velocity = velocity;
+        exp_settings(i).c_diss = c_diss;
+    end
+end
 % ================== NEW HELPER FUNCTIONS ==================
-function residuals = compute_residuals_log(log_params, exp_settings, exp_data, ...
-    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m)
+% --- Modified compute_residuals_log function ---
+function residuals_aug = compute_residuals_log_tikhonov(...
+    log_params, exp_settings, exp_data, ...
+    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m, n_exp, ...
+    lambda_reg, log_params_ref, L_matrix) % New inputs for regularization
+% compute_residuals_log_tikhonov: Computes residuals for lsqnonlin, including Tikhonov term.
+%
+% Inputs:
+%   ... (original inputs) ...
+%   n_exp: Number of experiments
+%   lambda_reg: Tikhonov regularization parameter (lambda)
+%   log_params_ref: Reference log-parameter vector (p0 in log space for penalty)
+%   L_matrix (optional): Tikhonov matrix L. If empty or not provided, identity is assumed.
 
     % Convert from log to linear scale
-    params = 10.^log_params;
+    params = 10.^log_params; % Current parameters being optimized
+    num_total_params = length(log_params);
+
+    % --- Original residual calculation ---
     num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
     
-    % Split parameters
-    kon_ads = reshape(params(1:num_ads_cells), [ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1]);
-    koff_ads = reshape(params(num_ads_cells+1:2*num_ads_cells), size(kon_ads));
-    smax_ads = reshape(params(2*num_ads_cells+1:end), size(kon_ads));
+    % Ensure ads_param_shape is correctly determined if needed for reshaping inside run_single_experiment
+    ads_param_shape = [ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1];
+
+    kon_ads = reshape(params(1:num_ads_cells), ads_param_shape);
+    koff_ads = reshape(params(num_ads_cells+1:2*num_ads_cells), ads_param_shape);
+    smax_ads = reshape(params(2*num_ads_cells+1:end), ads_param_shape);
     
-    residuals = [];
-    for exp_idx = 1:3
+    model_residuals = [];
+    for exp_idx = 1:n_exp
         setting = exp_settings(exp_idx);
+        % Assuming run_single_experiment is correctly defined and in path
         [~, s_sim] = run_single_experiment(...
             nx, ny, nz, kon_ads, koff_ads, smax_ads,...
             ads_x_range, ads_y_range, ads_layer, setting, D_coeff, ru_to_m);
         
         % Stack residuals from all experiments
-        residuals = [residuals; (s_sim - exp_data{exp_idx})];
+        model_residuals = [model_residuals; (s_sim - exp_data{exp_idx})];
+    end
+
+    % --- Tikhonov Regularization Term ---
+    if lambda_reg > 0
+        if ~exist('L_matrix', 'var') || isempty(L_matrix)
+            % Default L = I (Identity matrix)
+            % Penalty is lambda * (log_params - log_params_ref)
+            reg_term_vector = lambda_reg * (log_params(:) - log_params_ref(:));
+        else
+            % Penalty is lambda * L * (log_params - log_params_ref)
+            if size(L_matrix, 2) ~= num_total_params
+                error('L_matrix dimensions mismatch. Number of columns should be %d.', num_total_params);
+            end
+            reg_term_vector = lambda_reg * (L_matrix * (log_params(:) - log_params_ref(:)));
+        end
+        
+        % Augment the residual vector
+        residuals_aug = [model_residuals; reg_term_vector];
+    else
+        % No regularization
+        residuals_aug = model_residuals;
     end
 end
 
-function visualize_cost_landscape(true_params, scale_factors, residual_fun)
-    % Visualize 2D slices of cost function
-    rng(42);
-    num_dims = length(true_params);
-    dim1 = randi(num_dims);
-    dim2 = randi(num_dims);
-    while dim2 == dim1
-        dim2 = randi(num_dims);
-    end
-    
-    p0 = true_params ./ scale_factors;
-    range = 0.5;
-    steps = 20;
-    
-    [X, Y] = meshgrid(...
-        linspace(p0(dim1)-range, p0(dim1)+range, steps), ...
-        linspace(p0(dim2)-range, p0(dim2)+range, steps));
-    
-    Z = zeros(size(X));
-    for i = 1:size(X,1)
-        for j = 1:size(X,2)
-            p_test = p0;
-            p_test(dim1) = X(i,j);
-            p_test(dim2) = Y(i,j);
-            Z(i,j) = norm(residual_fun(p_test));
-        end
-    end
-    
-    figure('Position', [200, 200, 800, 600]);
-    surf(X, Y, Z, 'EdgeColor', 'none');
-    xlabel(sprintf('Parameter %d (scaled)', dim1));
-    ylabel(sprintf('Parameter %d (scaled)', dim2));
-    zlabel('Cost Function');
-    title('Cost Function Landscape');
-    colormap jet;
-    colorbar;
-    rotate3d on;
-end
 
 % ================== EXISTING HELPER FUNCTIONS ==================
 function [t, s_obs] = run_single_experiment(...
@@ -464,29 +596,6 @@ function [t, s_obs] = run_single_experiment(...
     
     % Compute observed signal
     s_obs = compute_s_obs(s, ads_x_range, ads_y_range, ads_layer);
-end
-
-function cost = objective_function(p, exp_settings, exp_data, ...
-    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m)
-    
-    % Split parameters into kon, koff, smax
-    num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
-    kon_ads = reshape(p(1:num_ads_cells), [ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1]);
-    koff_ads = reshape(p(num_ads_cells+1:2*num_ads_cells), size(kon_ads));
-    smax_ads = reshape(p(2*num_ads_cells+1:end), size(kon_ads));
-   
-    cost = 0;
-    % Calculate cost and gradient for each experiment
-    for exp_idx = 1:3
-        setting = exp_settings(exp_idx);
-        [~, s_sim] = run_single_experiment(...
-            nx, ny, nz, kon_ads, koff_ads, smax_ads,...
-            ads_x_range, ads_y_range, ads_layer, setting, D_coeff, ru_to_m);
-        
-        % Cost function (sum of squared errors)
-        residual = s_sim - exp_data{exp_idx};
-        cost = cost + 0.5 * sum(residual.^2);
-    end
 end
 
 function plot_parameter_recovery(true_params, opt_params, initial_guess, sz_kon, sz_koff, sz_smax)
@@ -567,7 +676,7 @@ function plot_parameter_recovery(true_params, opt_params, initial_guess, sz_kon,
 end
 
 function plot_signal_predictions(opt_params, exp_settings, exp_data, ...
-    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m)
+    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m,n_exp)
     
     num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
     kon_ads = reshape(opt_params(1:num_ads_cells), [ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1]);
@@ -575,7 +684,7 @@ function plot_signal_predictions(opt_params, exp_settings, exp_data, ...
     smax_ads = reshape(opt_params(2*num_ads_cells+1:end), size(kon_ads));
     
     figure('Position', [100, 100, 1200, 800]);
-    for exp_idx = 1:3
+    for exp_idx = 1:n_exp
         setting = exp_settings(exp_idx);
         [t, s_sim] = run_single_experiment(...
             nx, ny, nz, kon_ads, koff_ads, smax_ads,...
@@ -672,7 +781,7 @@ function [t, c_s, s, K, Q] = simulate_3d_flow_model_with_pulses(...
     y0 = [c_s0(:); s0(:); Q0(:); R0(:)];
     
     % Setup ODE options
-    options = odeset('RelTol', 1e-4, 'AbsTol', 1e-6);
+    options = odeset('RelTol', 1e-5, 'AbsTol', 1e-7);
     
     % Preallocate results
     t_all = [];
@@ -686,9 +795,8 @@ function [t, c_s, s, K, Q] = simulate_3d_flow_model_with_pulses(...
         c0_seg = concentrations(seg);
         
         % Determine time points for segment
-        num_points = max(10, ceil(200 * (t_end - t_start) / (t_breaks(end) - t_breaks(1))));
+        num_points = 800;
         tspan = linspace(t_start, t_end, num_points);
-        
         % Run simulation for segment
         [t_seg, y_seg] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, ...
             kon_grid, koff_grid, smax_grid, c0_seg, D_coeff, ru_to_m), tspan, y0, options);
@@ -763,4 +871,149 @@ function dydt = ode_system(t, y, nx, ny, nz, velocity_profile, kon_grid, koff_gr
 
     % Combine all derivatives
     dydt = [dcsdt(:); dsdt(:); dQdt(:); dRdt(:)];
+end
+function stop = optimPlotter(log_params, optimValues, state, ...
+                            true_params_vec, exp_data, exp_settings, model_config, ...
+                            sz_kon, sz_koff, sz_smax, video_obj)
+% optimPlotter is an output function for lsqnonlin to visualize optimization progress.
+% It plots the evolution of parameters and sensorgram fit, and saves the animation to a video file.
+
+    stop = false; % This function does not stop the optimization
+    
+    % Use persistent variables to store plot handles and static data
+    persistent handles; 
+
+    switch state
+        case 'init'
+            % On the first call, create the figure, axes, and open the video file
+            fig = figure('Name', 'Optimization Progress', 'Position', [150, 150, 1600, 700]);
+            
+            % --- Setup Axes ---
+            ax_kon = subplot(2, 3, 1);
+            ax_koff = subplot(2, 3, 2);
+            ax_smax = subplot(2, 3, 3);
+            num_exp_to_plot = min(length(exp_settings), 3);
+            ax_sigs = gobjects(1, num_exp_to_plot);
+            for i = 1:num_exp_to_plot
+                ax_sigs(i) = subplot(2, num_exp_to_plot, num_exp_to_plot + i);
+            end
+            
+            % --- Store handles and static data ---
+            handles.fig = fig;
+            handles.ax_kon = ax_kon; handles.ax_koff = ax_koff; handles.ax_smax = ax_smax;
+            handles.ax_sigs = ax_sigs;
+            
+            handles.true_params_vec = true_params_vec;
+            handles.exp_data = exp_data;
+            handles.exp_settings = exp_settings;
+            handles.model_config = model_config;
+            handles.sz_kon = sz_kon; handles.sz_koff = sz_koff; handles.sz_smax = sz_smax;
+            handles.n_exp_to_plot = num_exp_to_plot;
+            handles.video_obj = video_obj; % Store video object handle
+            
+            % --- Open video file for writing ---
+            if ~isempty(handles.video_obj)
+                try
+                    open(handles.video_obj);
+                catch ME
+                    warning('Could not open video file for writing: %s', ME.message);
+                    handles.video_obj = []; % Invalidate object if it fails
+                end
+            end
+            
+            % Call update function to draw and capture the initial frame
+            updatePlotsAndVideo(log_params, optimValues, handles);
+
+        case 'iter'
+            % On each subsequent iteration, update the plots and save the frame
+            if ishandle(handles.fig) % Check if the user has closed the figure
+                updatePlotsAndVideo(log_params, optimValues, handles);
+            else
+                stop = true; % Stop optimization if figure is closed
+                fprintf('Animation figure closed. Stopping optimization.\n');
+            end
+            
+        case 'done'
+            % Finalize and close the video file
+            if isfield(handles, 'video_obj') && ~isempty(handles.video_obj)
+                try
+                    close(handles.video_obj);
+                    fprintf('Video successfully saved to: %s\n', handles.video_obj.Filename);
+                catch ME
+                    warning('Could not finalize video file: %s', ME.message);
+                end
+            end
+            if ishandle(handles.fig)
+                sgtitle(handles.fig, 'Optimization Finished!', 'FontSize', 14, 'FontWeight', 'bold');
+            end
+    end
+
+    % --- Nested function to handle plotting AND video frame writing ---
+    function updatePlotsAndVideo(current_log_params, optimVals, h)
+        
+        current_params_linear = 10.^current_log_params;
+
+        % --- Split parameters for plotting ---
+        num_kon = prod(h.sz_kon);
+        num_koff = prod(h.sz_koff);
+        true_kon = h.true_params_vec(1:num_kon);
+        true_koff = h.true_params_vec(num_kon+1:num_kon+num_koff);
+        true_smax = h.true_params_vec(num_kon+num_koff+1:end);
+        opt_kon = current_params_linear(1:num_kon);
+        opt_koff = current_params_linear(num_kon+1:num_kon+num_koff);
+        opt_smax = current_params_linear(num_kon+num_koff+1:end);
+
+        % --- Update Parameter Plots ---
+        cla(h.ax_kon); hold(h.ax_kon, 'on');
+        plot(h.ax_kon, true_kon, 'ro', 'MarkerSize', 8, 'LineWidth', 2, 'DisplayName', 'True');
+        plot(h.ax_kon, opt_kon, 'g*', 'MarkerSize', 8, 'LineWidth', 1.5, 'DisplayName', 'Current');
+        title(h.ax_kon, sprintf('k_{on} (Iter: %d)', optimVals.iteration));
+        legend(h.ax_kon, 'Location', 'best'); grid(h.ax_kon, 'on'); hold(h.ax_kon, 'off');
+        
+        cla(h.ax_koff); hold(h.ax_koff, 'on');
+        plot(h.ax_koff, true_koff, 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+        plot(h.ax_koff, opt_koff, 'g*', 'MarkerSize', 8, 'LineWidth', 1.5);
+        title(h.ax_koff, sprintf('k_{off} (F-count: %d)', optimVals.funccount));
+        grid(h.ax_koff, 'on'); hold(h.ax_koff, 'off');
+
+        cla(h.ax_smax); hold(h.ax_smax, 'on');
+        plot(h.ax_smax, true_smax, 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+        plot(h.ax_smax, opt_smax, 'g*', 'MarkerSize', 8, 'LineWidth', 1.5);
+        title(h.ax_smax, sprintf('s_{max} (Residual: %.2e)', optimVals.resnorm));
+        grid(h.ax_smax, 'on'); hold(h.ax_smax, 'off');
+
+        % --- Update Sensorgram Plots ---
+        kon_ads_current = reshape(opt_kon, h.sz_kon);
+        koff_ads_current = reshape(opt_koff, h.sz_koff);
+        smax_ads_current = reshape(opt_smax, h.sz_smax);
+        for i_plot = 1:h.n_exp_to_plot
+            setting = h.exp_settings(i_plot);
+            [t, s_sim] = run_single_experiment(h.model_config.gridN_x, h.model_config.gridN_y, h.model_config.gridN_z, ...
+                kon_ads_current, koff_ads_current, smax_ads_current, ...
+                h.model_config.ads_x_range, h.model_config.ads_y_range, h.model_config.ads_layer, ...
+                setting, h.model_config.D_coeff, h.model_config.ru_to_m);
+            
+            ax = h.ax_sigs(i_plot);
+            cla(ax); hold(ax, 'on');
+            plot(ax, t, h.exp_data{i_plot}, 'b-', 'LineWidth', 2, 'DisplayName', 'Data');
+            plot(ax, t, s_sim, 'r--', 'LineWidth', 1.5, 'DisplayName', 'Current Fit');
+            title(ax, sprintf('Sensorgram - Exp %d', i_plot));
+            legend(ax, 'Location', 'best'); xlabel(ax, 'Time (s)'); ylabel(ax, 's_{obs}(t)');
+            grid(ax, 'on'); hold(ax, 'off');
+        end
+
+        drawnow; % Force the figure window to update
+
+        % --- Capture Frame for Video ---
+        if ~isempty(h.video_obj)
+            try
+                frame = getframe(h.fig); % Capture the entire figure window
+                writeVideo(h.video_obj, frame);
+            catch ME
+                warning('Could not write frame to video: %s', ME.message);
+                % Invalidate object to stop trying on subsequent iterations
+                h.video_obj = []; 
+            end
+        end
+    end
 end
