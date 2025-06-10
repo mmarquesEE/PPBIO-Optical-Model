@@ -7,30 +7,140 @@ function validate_kernel_implementation()
     ads_x_range = [10,14]; ads_y_range = [2,4];
     num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
     
-    % Homogeneous parameters (from step 1 results)
+    % Homogeneous parameters
     homog_params = [9.4e3, 0.0078, 1.0]; % kon, koff, smax_total
     smax_per_cell = homog_params(3) / num_ads_cells;
     
     % 1. Homogeneous Kernel Calculation
     [K_homog, t_homog, s_homog, Q_homog] = simulate_homogeneous_kernel(homog_params, gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
     
-    % 2. Heterogeneous Kernel Calculation (known parameters)
-    [kon_grid, koff_grid, smax_grid] = create_ground_truth_heterogeneity(gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
-    [K_heterog, t_heterog, s_heterog, Q_heterog] = simulate_heterogeneous_kernel(kon_grid, koff_grid, smax_grid, gridN_x, gridN_y, gridN_z);
+    % 2. Heterogeneous Kernel Calculation
+    [kon_grid_het, koff_grid_het, smax_grid_het] = create_ground_truth_heterogeneity(gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
+    [K_heterog, t_heterog, s_heterog, Q_heterog] = simulate_heterogeneous_kernel(kon_grid_het, koff_grid_het, smax_grid_het, gridN_x, gridN_y, gridN_z);
     
-    % Extract adsorption region parameters
-    kon_heterog_ads = kon_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-    smax_heterog_ads = smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    % --- Generate all grids for plotting ---
+    [kon_grid_hom, koff_grid_hom, smax_grid_hom] = create_homogeneous_grids(homog_params, gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
     
-    % 3. Composite Behavior Comparison
+    % --- Plot all Parameter Fields (Updated) ---
+    plot_and_save_parameter_fields(kon_grid_hom, koff_grid_hom, smax_grid_hom, ...
+                                   kon_grid_het, koff_grid_het, smax_grid_het, ...
+                                   ads_x_range, ads_y_range, ads_layer);
+    
+    % Extract adsorption region parameters for comparison function
+    kon_heterog_ads = kon_grid_het(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    smax_heterog_ads = smax_grid_het(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    
+    % 3. Composite Behavior Comparison and Plotting
     compare_composite_behavior(s_homog, s_heterog, Q_homog, Q_heterog, K_homog, K_heterog,...
         t_homog, t_heterog, ads_x_range, ads_y_range, ads_layer,...
         homog_params(1), smax_per_cell, kon_heterog_ads, smax_heterog_ads);
 end
 
 %% Helper Functions
+
+% =========================================================================
+% UPDATED FUNCTION TO PLOT AND SAVE ALL PARAMETER FIELDS
+% =========================================================================
+function plot_and_save_parameter_fields(kon_homog, koff_homog, smax_homog, ...
+                                        kon_heterog, koff_heterog, smax_heterog, ...
+                                        ads_x_range, ads_y_range, ads_layer)
+    
+    figure('Position', [300, 300, 500, 400]);
+    
+    % Use tiledlayout for better control over spacing
+    tiledlayout(3, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    
+    % --- Row 1: Plot k_on ---
+    % Calculate color limits ONLY from the sensible region
+    kon_slice_heterog = kon_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    c_limits_kon = [min(kon_slice_heterog(:)), max(kon_slice_heterog(:))];
+    if diff(c_limits_kon) < 1e-9; c_limits_kon(2) = c_limits_kon(1) + 1; end % Robustness check
+
+    % Homogeneous k_on
+    nexttile;
+    plot_grid_with_black_background(kon_homog(:,:,ads_layer)', c_limits_kon);
+    title('Homogeneous');
+    ylabel('k_{on}', 'FontSize', 10);
+    set(gca, 'XTickLabel', []); 
+    
+    % Heterogeneous k_on
+    nexttile;
+    plot_grid_with_black_background(kon_heterog(:,:,ads_layer)', c_limits_kon);
+    title('Heterogeneous');
+    set(gca, 'XTickLabel', [], 'YTickLabel', []);
+    colorbar;
+
+    % --- Row 2: Plot k_off ---
+    koff_slice_heterog = koff_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    c_limits_koff = [min(koff_slice_heterog(:)), max(koff_slice_heterog(:))];
+    if diff(c_limits_koff) < 1e-9; c_limits_koff(2) = c_limits_koff(1) + 1; end
+
+    % Homogeneous k_off
+    nexttile;
+    plot_grid_with_black_background(koff_homog(:,:,ads_layer)', c_limits_koff);
+    ylabel('k_{off}', 'FontSize', 10);
+    set(gca, 'XTickLabel', []); 
+
+    % Heterogeneous k_off
+    nexttile;
+    plot_grid_with_black_background(koff_heterog(:,:,ads_layer)', c_limits_koff);
+    set(gca, 'XTickLabel', [], 'YTickLabel', []);
+    colorbar;
+
+    % --- Row 3: Plot s_max ---
+    smax_slice_heterog = smax_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    c_limits_smax = [min(smax_slice_heterog(:)), max(smax_slice_heterog(:))];
+    if diff(c_limits_smax) < 1e-9; c_limits_smax(2) = c_limits_smax(1) + 1; end
+
+    % Homogeneous s_max
+    nexttile;
+    plot_grid_with_black_background(smax_homog(:,:,ads_layer)', c_limits_smax);
+    xlabel('y-grid index');
+    ylabel('s_{max}', 'FontSize', 10);
+    
+    % Heterogeneous s_max
+    nexttile;
+    plot_grid_with_black_background(smax_heterog(:,:,ads_layer)', c_limits_smax);
+    xlabel('y-grid index');
+    set(gca, 'YTickLabel', []);
+    colorbar;
+    
+    % Add a main y-label for the entire layout
+    han = gcf();
+    han.CurrentAxes = gca();
+    ylabel(han.CurrentAxes.Parent, 'x-grid index', 'FontSize',10)
+    
+    % Save the figure
+    disp('Saving parameter fields plot as param_fields.png...');
+    print('Testing_kernel/param_fields.png', '-dpng', '-r300');
+end
+
+% --- Helper sub-function for plotting ---
+function plot_grid_with_black_background(grid_data, c_limits)
+    % This function uses transparency to make zero-value areas reveal a black background
+    
+    % Plot the image and get a handle to it
+    h = imagesc(grid_data);
+    
+    % Set the colormap for the data
+    colormap(gca, parula);
+    
+    % Create a transparency map: 1 for non-zero data, 0 for zero-data
+    alpha_map = double(grid_data ~= 0);
+    
+    % Apply the transparency map
+    set(h, 'AlphaData', alpha_map);
+    
+    % Set the axis background color to black
+    set(gca, 'Color', 'k');
+    
+    % Apply the color limits and tighten the axis
+    caxis(c_limits);
+    axis tight;
+end
+
+
 function [kon_grid, koff_grid, smax_grid] = create_homogeneous_grids(params, nx, ny, nz, ads_x_range, ads_y_range, ads_layer)
-    % Create uniform parameter grids
     kon_grid = zeros(nx, ny, nz);
     koff_grid = zeros(nx, ny, nz);
     smax_grid = zeros(nx, ny, nz);
@@ -56,12 +166,12 @@ function [K, t, s, Q] = simulate_homogeneous_kernel(params, nx, ny, nz, ads_x_ra
     [kon_grid, koff_grid, smax_grid] = create_homogeneous_grids(params, nx, ny, nz, ads_x_range, ads_y_range, ads_layer);
     velocity_profile = create_velocity_profile(nz, 8.3);
     
-    % Create initial condition for s (50% saturation in adsorption region)
-    s0_grid = 0 * smax_grid;
+    % Create initial condition for s (20% saturation in adsorption region)
+    s0_grid = 0.2 * smax_grid;
     
     [t, ~, s, K, Q] = simulate_3d_flow_model(...
         nx, ny, nz, kon_grid, koff_grid, smax_grid,...
-        velocity_profile, 3.3e-6, 0, 800, 1200, 6e-3, 1e-6, s0_grid);
+        velocity_profile, 3.3e-6, 0, 1500, 3500, 6e-3, 1e-6, s0_grid);
 end
 
 function [kon_grid, koff_grid, smax_grid] = create_ground_truth_heterogeneity(nx, ny, nz, ads_x_range, ads_y_range, ads_layer)
@@ -70,12 +180,10 @@ function [kon_grid, koff_grid, smax_grid] = create_ground_truth_heterogeneity(nx
     smax_total = 1.0;
     num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
     
-    % Initialize grids
     kon_grid = zeros(nx, ny, nz);
     koff_grid = zeros(nx, ny, nz);
     smax_grid = zeros(nx, ny, nz);
     
-    % Add 5% variation to adsorption region
     rng(42); % For reproducibility
     kon_vals = kon_base * (1 + 0.05*randn(ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1));
     koff_vals = koff_base * (1 + 0.05*randn(size(kon_vals)));
@@ -89,14 +197,17 @@ end
 function [K, t, s, Q] = simulate_heterogeneous_kernel(kon_grid, koff_grid, smax_grid, nx, ny, nz)
     velocity_profile = create_velocity_profile(nz, 8.3);
     
-    % Create initial condition for s (50% saturation in adsorption region)
-    s0_grid = 0 * smax_grid;
+    % Create initial condition for s (20% saturation in adsorption region)
+    s0_grid = 0.2 * smax_grid;
     
     [t, ~, s, K, Q] = simulate_3d_flow_model(...
         nx, ny, nz, kon_grid, koff_grid, smax_grid,...
-        velocity_profile, 3.3e-6, 0, 800, 1200, 6e-3, 1e-6, s0_grid);
+        velocity_profile, 3.3e-6, 0, 1500, 3500, 6e-3, 1e-6, s0_grid);
 end
 
+% =========================================================================
+% MODIFIED COMPARISON FUNCTION TO SAVE PLOTS
+% =========================================================================
 function compare_composite_behavior(s_homog, s_heterog, Q_homog, Q_heterog, K_homog, K_heterog,...
         t_homog, t_heterog, ads_x_range, ads_y_range, ads_layer,...
         kon_homog, smax_per_cell, kon_heterog_ads, smax_heterog_ads)
@@ -111,70 +222,70 @@ function compare_composite_behavior(s_homog, s_heterog, Q_homog, Q_heterog, K_ho
     ads_cells_Q_heterog = Q_heterog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
     ads_cells_K_heterog = K_heterog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
     
-    % Get initial surface concentration (t=0)
-    s0_homog_ads = squeeze(ads_cells_s_homog(1, :, :, :));
-    s0_heterog_ads = squeeze(ads_cells_s_heterog(1, :, :, :));
+    s0_homog_ads = squeeze(ads_cells_s_homog(1, :, :));
+    s0_heterog_ads = squeeze(ads_cells_s_heterog(1, :, :));
     
-    % Compute alpha (kon * smax) for each cell
     alpha_homog_ads = kon_homog * smax_per_cell * ones(size(kon_heterog_ads));
     alpha_heterog_ads = kon_heterog_ads .* smax_heterog_ads;
     
-    % Reshape alpha arrays for broadcasting (s0 arrays remain as [1, dx, dy])
     alpha_homog_ads = reshape(alpha_homog_ads, [1, size(alpha_homog_ads)]);
     alpha_heterog_ads = reshape(alpha_heterog_ads, [1, size(alpha_heterog_ads)]);
     s0_homog_ads = reshape(s0_homog_ads, [1, size(s0_homog_ads)]);
     s0_heterog_ads = reshape(s0_heterog_ads, [1, size(s0_heterog_ads)]);
 
-    % Compute decay term: s0 * exp(-Q)
     decay_term_homog = s0_homog_ads .* exp(-ads_cells_Q_homog);
     decay_term_heterog = s0_heterog_ads .* exp(-ads_cells_Q_heterog);
     
-    % Compute kernel term: alpha * K
     kernel_term_homog = alpha_homog_ads .* ads_cells_K_homog;
     kernel_term_heterog = alpha_heterog_ads .* ads_cells_K_heterog;
     
-    % Sum over adsorption region
-    decay_sum_homog = squeeze(sum(decay_term_homog, [2,3,4]));
-    kernel_sum_homog = squeeze(sum(kernel_term_homog, [2,3,4]));
+    decay_sum_homog = squeeze(sum(decay_term_homog, [2,3]));
+    kernel_sum_homog = squeeze(sum(kernel_term_homog, [2,3]));
     s_obs_homog = decay_sum_homog + kernel_sum_homog;
     
-    decay_sum_heterog = squeeze(sum(decay_term_heterog, [2,3,4]));
-    kernel_sum_heterog = squeeze(sum(kernel_term_heterog, [2,3,4]));
+    decay_sum_heterog = squeeze(sum(decay_term_heterog, [2,3]));
+    kernel_sum_heterog = squeeze(sum(kernel_term_heterog, [2,3]));
     s_obs_heterog = decay_sum_heterog + kernel_sum_heterog;
     
-    % Calculate discrepancy
     discrepancy = trapz(t_heterog, (s_obs_homog - s_obs_heterog).^2);
     fprintf('Composite behavior discrepancy: %.2e\n', discrepancy);
     
-    % Plot decomposition for homogeneous case
-    figure;
+    % Plot decomposition for both cases
+    fig1 = figure;
     subplot(2,1,1);
     plot(t_homog, s_obs_homog, 'k-', 'LineWidth', 2); hold on;
     plot(t_homog, decay_sum_homog, 'b--', 'LineWidth', 1.5);
     plot(t_homog, kernel_sum_homog, 'r--', 'LineWidth', 1.5);
     xlabel('Time (s)'); ylabel('s_{obs}');
-    legend('Total', 'Decay Term', 'Kernel Term');
-    title('Homogeneous Case: Signal Decomposition');
+    legend('Total', 'Decay Term', 'Kernel Term', 'Location', 'best');
+    %title('(A) Homogeneous Case: Signal Decomposition');
+    title('(A)')
     grid on;
     
-    % Plot decomposition for heterogeneous case
     subplot(2,1,2);
     plot(t_heterog, s_obs_heterog, 'k-', 'LineWidth', 2); hold on;
     plot(t_heterog, decay_sum_heterog, 'b--', 'LineWidth', 1.5);
     plot(t_heterog, kernel_sum_heterog, 'r--', 'LineWidth', 1.5);
     xlabel('Time (s)'); ylabel('s_{obs}');
-    legend('Total', 'Decay Term', 'Kernel Term');
-    title('Heterogeneous Case: Signal Decomposition');
+    legend('Total', 'Decay Term', 'Kernel Term', 'Location', 'best');
+    %title('(B) Heterogeneous Case: Signal Decomposition');
+    title('(B)')
     grid on;
     
+    disp('Saving signal decomposition plot as signal_decomposition.png...');
+    print(fig1, 'Testing_kernel/signal_decomposition.png', '-dpng', '-r300');
+    
     % Plot total signal comparison
-    figure;
+    fig2 = figure;
     plot(t_heterog, s_obs_homog, 'b-', 'LineWidth', 2); hold on;
     plot(t_heterog, s_obs_heterog, 'r--', 'LineWidth', 1.5);
     xlabel('Time (s)'); ylabel('s_{obs}(t)');
-    legend('Homogeneous', 'Heterogeneous (5% var)');
-    title(sprintf('Composite Behavior Comparison\nDiscrepancy: %.2e', discrepancy));
+    legend('Homogeneous', 'Heterogeneous (5% var)', 'Location', 'best');
+    %title(sprintf('Composite Behavior Comparison\nDiscrepancy: %.2e', discrepancy));
     grid on;
+    
+    disp('Saving sensorgram comparison plot as sensorgram_comparison.png...');
+    print(fig2, 'Testing_kernel/sensorgram_comparison.png', '-dpng', '-r300');
 end
 
 function [t, c_s, s, K, Q] = simulate_3d_flow_model(nx, ny, nz, kon_grid, koff_grid, smax_grid, velocity_profile, c0_assoc, c0_diss, t_assoc, t_total, D_coeff, ru_to_m, s0_grid)
