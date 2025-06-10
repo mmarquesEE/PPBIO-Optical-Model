@@ -1,243 +1,17 @@
 % Main script to run the Tikhonov regularization scenarios
 clearvars; close all; clc;
 
-% main_run_lcurve_analysis.m
-% This script first finds the optimal lambda via L-curve analysis and then
-% runs the final, regularized parameter estimation.
+fprintf('This script will demonstrate the necessity of Tikhonov regularization for parameter estimation.\n');
+fprintf('It will run three scenarios and generate plots for each.\n\n');
 
-clearvars; close all; clc;
 
-fprintf('--- L-CURVE REGULARIZATION ANALYSIS ---\n\n');
+% --- SCENARIO 3: The Solution ---
+% With noise AND Tikhonov regularization. We expect a good parameter recovery,
+% showing how regularization stabilizes the solution.
+fprintf('--- RUNNING SCENARIO: Bayesian Inference with MCMC ---\n');
+run_estimation_scenario('3: With Noise, Bayesian MCMC', 0.02, 5e-1);
+fprintf('--- BAYESIAN SCENARIO COMPLETE ---\n\n');
 
-% =========================================================================
-% STEP 1: SETUP AND DATA GENERATION (Same as before)
-% =========================================================================
-fprintf('STEP 1: Setting up the problem and generating noisy data...\n');
-% Shared parameters
-gridN_x = 10; gridN_y = 5; gridN_z = 3;
-ads_layer = 1;
-ads_x_range = [5,5]; ads_y_range = [2,3];
-
-ads_nx = ads_x_range(2) - ads_x_range(1) + 1;
-ads_ny = ads_y_range(2) - ads_y_range(1) + 1;
-num_ads_cells = ads_nx * ads_ny;
-
-% Homogeneous parameters for initial guess
-homog_params = [9.4e3, 0.0078, 1.0]; % kon, koff, smax_total
-
-% Fixed parameters
-D_coeff = 6e-3;
-ru_to_m = 1e-6;
-base_max_velocity = 8.3;
-noise_level = 0.02; % 5% noise
-
-% Experiment settings
-n_exp = 3;
-T1 = 2000; T2 = 4000; T3 = 3*T1;
-t_total = 4*T1;
-c_diss = 0; c1 = 3.3e-6; c2 = 1e-6;
-exp_settings = generate_experiments(n_exp, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2);
-
-% Create and extract true heterogeneous parameters
-[kon_grid_heterog, koff_grid_heterog, smax_grid_heterog] = ...
-    create_ground_truth_heterogeneity(gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
-true_kon = kon_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-true_koff = koff_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-true_smax = smax_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-true_params_vec = [true_kon(:); true_koff(:); true_smax(:)];
-N_params = length(true_params_vec);
-
-% Generate "experimental" data with noise
-exp_data = cell(n_exp,1);
-parfor exp_idx = 1:n_exp
-    setting = exp_settings(exp_idx);
-    [~, s_obs] = run_single_experiment(...
-        gridN_x, gridN_y, gridN_z, true_kon, true_koff, true_smax,...
-        ads_x_range, ads_y_range, ads_layer, setting, D_coeff, ru_to_m);
-    noise_std = noise_level * max(s_obs);
-    exp_data{exp_idx} = s_obs + noise_std * randn(size(s_obs));
-end
-fprintf('Data generation complete.\n\n');
-
-% =========================================================================
-% STEP 2: L-CURVE ANALYSIS TO FIND OPTIMAL LAMBDA
-% =========================================================================
-fprintf('STEP 2: Performing L-curve analysis to find optimal lambda...\n');
-
-% Define range of lambda values to test
-lambda_values = logspace(-4, -1, 20);
-
-% Define problem structure to pass to the function
-problem.exp_settings = exp_settings;
-problem.exp_data = exp_data;
-problem.gridN_x = gridN_x; problem.gridN_y = gridN_y; problem.gridN_z = gridN_z;
-problem.ads_x_range = ads_x_range; problem.ads_y_range = ads_y_range; problem.ads_layer = ads_layer;
-problem.D_coeff = D_coeff; problem.ru_to_m = ru_to_m;
-problem.n_exp = n_exp;
-problem.ads_nx = ads_nx; problem.ads_ny = ads_ny;
-problem.num_ads_cells = num_ads_cells;
-problem.homog_params = homog_params;
-problem.N_params = N_params;
-
-% Run the L-curve analysis
-optimal_lambda = find_optimal_lambda_lcurve(problem, lambda_values);
-
-fprintf('L-curve analysis complete. Optimal lambda found: %.4e\n\n', optimal_lambda);
-
-% =========================================================================
-% STEP 3: RUN FINAL ESTIMATION WITH OPTIMAL LAMBDA
-% =========================================================================
-fprintf('STEP 3: Running final estimation with the optimal lambda.\n');
-
-scenario_title = sprintf('Optimal Regularization (lambda=%.2e)', optimal_lambda);
-run_estimation_scenario(scenario_title, noise_level, optimal_lambda);
-
-fprintf('--- ANALYSIS COMPLETE ---\n');
-
-function exp_settings = generate_experiments(M, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2)
-    % Generates M experiments with orthogonal concentration profiles and flow velocities
-    %
-    % Inputs:
-    %   M - Number of experiments
-    %   base_max_velocity - Reference flow velocity (e.g., 8.3)
-    %   T1, T2, T3 - Fixed pulse times
-    %   t_total - Total experiment duration
-    %   c_diss - Dissociation concentration
-    %   c1, c2 - Base concentrations
-    
-    exp_settings = struct(...
-        'pulse_times', {}, ...
-        'pulse_concs', {}, ...
-        't_total', {}, ...
-        'max_velocity', {}, ...
-        'c_diss', {} ...
-    );
-    
-    % Generate orthogonal concentration pairs using polar coordinates
-    angles = linspace(0, pi/2, M);  % Cover quadrant for positive concentrations
-    factors = linspace(0.3, 3, M);  % Concentration scaling factors
-    
-    for i = 1:M
-        if M ==1
-            M=2;
-        end
-        % Create orthogonal concentration profiles
-        conc_factor1 = factors(ceil(i/2)) * cos(angles(i));
-        conc_factor2 = factors(ceil(i/2)) * sin(angles(i));
-        
-        % Ensure minimum concentration variation
-        min_conc = 0.1 * min(c1, c2);
-        conc1 = max(c1 * (0.5 + conc_factor1), min_conc);
-        conc3 = max(c2 * (0.5 + conc_factor2), min_conc);
-        
-        % Create velocity profile (logarithmic spacing)
-        vel_min = 0.1 * base_max_velocity;
-        vel_max = 5.0 * base_max_velocity;
-        velocity = exp(log(vel_min) + (i-1)/(M-1) * (log(vel_max) - log(vel_min)));
-        
-        % Special patterns for every 3rd experiment
-        if mod(i,3) == 0
-            exp_settings(i).pulse_concs = [conc1, c2, conc3];  % Middle pulse active
-        elseif mod(i,4) == 0
-            exp_settings(i).pulse_concs = [c1, 0, conc3];      % First pulse fixed
-        else
-            exp_settings(i).pulse_concs = [conc1, 0, conc3];   % Standard pattern
-        end
-        
-        % Assign common parameters
-        exp_settings(i).pulse_times = [T1, T2, T3];
-        exp_settings(i).t_total = t_total;
-        exp_settings(i).max_velocity = velocity;
-        exp_settings(i).c_diss = c_diss;
-    end
-end
-% ================== NEW HELPER FUNCTIONS ==================
-% --- Modified compute_residuals_log function ---
-
-% find_optimal_lambda_lcurve.m
-function optimal_lambda = find_optimal_lambda_lcurve(problem, lambda_values)
-    % Unpack problem structure
-    p = problem; 
-    
-    % Get initial guess and bounds
-    homog_kon = p.homog_params(1);
-    homog_koff = p.homog_params(2);
-    homog_smax_cell = p.homog_params(3) / p.num_ads_cells;
-    p0 = [log10(homog_kon * ones(p.num_ads_cells,1)); ...
-          log10(homog_koff * ones(p.num_ads_cells,1)); ...
-          log10(homog_smax_cell * ones(p.num_ads_cells,1))];
-    lb = [repmat(log10(1e2), p.num_ads_cells, 1); repmat(log10(1e-4), p.num_ads_cells, 1); repmat(log10(1e-3), p.num_ads_cells, 1)];
-    ub = [repmat(log10(1e5), p.num_ads_cells, 1); repmat(log10(1e0), p.num_ads_cells, 1); repmat(log10(1e1), p.num_ads_cells, 1)];
-    
-    % Create the spatial regularization operator
-    L_matrix = create_spatial_regularization_operator(p.ads_nx, p.ads_ny);
-    log_params_ref = zeros(p.N_params, 1);
-
-    % Optimization options
-    optim_opts = optimoptions('lsqnonlin', 'Algorithm', 'trust-region-reflective', ...
-        'Display', 'iter', 'UseParallel', true, 'FiniteDifferenceType', 'central',...
-        'MaxIterations', 15, 'FunctionTolerance', 1e-8, 'StepTolerance', 1e-8);
-
-    % Preallocate results
-    rho = zeros(length(lambda_values), 1); % Residual norm ||Ax-b||^2
-    eta = zeros(length(lambda_values), 1); % Solution norm ||Lx||^2
-    
-    fprintf('Testing %d lambda values...\n', length(lambda_values));
-    tic;
-    
-    % Loop over all lambda values
-    for i = 1:length(lambda_values)
-        lambda = lambda_values(i);
-        
-        % Define the residual function for this lambda
-        residual_fun = @(log_params) compute_residuals_log_tikhonov(...
-            log_params, p.exp_settings, p.exp_data, ...
-            p.gridN_x, p.gridN_y, p.gridN_z, ...
-            p.ads_x_range, p.ads_y_range, p.ads_layer, p.D_coeff, p.ru_to_m, ...
-            p.n_exp, lambda, log_params_ref, L_matrix);
-        
-        % Run optimization
-        [opt_log_params, resnorm] = lsqnonlin(residual_fun, p0, lb, ub, optim_opts);
-        
-        % Deconstruct the augmented residual norm
-        num_model_residuals = sum(cellfun(@numel, p.exp_data));
-        num_reg_residuals = size(L_matrix, 1);
-        
-        % The total resnorm = rho + eta
-        % We need to separate them.
-        residuals_unaugmented = residual_fun(opt_log_params);
-        residuals_model = residuals_unaugmented(1:num_model_residuals);
-        residuals_reg = residuals_unaugmented(num_model_residuals+1:end);
-
-        rho(i) = norm(residuals_model)^2;
-        % eta = ||L*p||^2 = (||sqrt(lambda)*L*p||^2) / lambda
-        eta(i) = norm(residuals_reg)^2 / lambda;
-        
-        fprintf('  Lambda = %.2e, rho = %.2e, eta = %.2e\n', lambda, rho(i), eta(i));
-    end
-    
-    toc;
-    
-    % Find the corner of the L-curve
-    [k, idx] = max(calculate_curvature(log10(rho), log10(eta)));
-    optimal_lambda = lambda_values(idx);
-    
-    % Plot the L-curve
-    figure('Name', 'L-Curve Analysis', 'Position', [200, 200, 700, 600]);
-    loglog(rho, eta, 'k-o', 'LineWidth', 2, 'MarkerFaceColor', 'k');
-    hold on;
-    loglog(rho(idx), eta(idx), 'r-s', 'MarkerSize', 15, 'LineWidth', 3, 'MarkerFaceColor', 'r');
-    xlabel('Residual Norm ||\Phi(p) - s_{obs}||_2^2');
-    ylabel('Solution Norm ||L p||_2^2');
-    title('L-Curve: Trade-off between Data Fit and Solution Smoothness');
-    legend('L-Curve', sprintf('Optimal \lambda = %.2e', optimal_lambda), 'Location', 'best');
-    grid on;
-    set(gca, 'FontSize', 12);
-    
-    fig_filename = 'L_Curve_Analysis.png';
-    saveas(gcf, fig_filename);
-    fprintf('Saved L-curve plot to %s\n', fig_filename);
-end
 function run_estimation_scenario(scenario_title, noise_level, lambda_tikhonov)
     % Shared parameters
     gridN_x = 10; gridN_y = 5; gridN_z = 3;
@@ -278,143 +52,6 @@ function run_estimation_scenario(scenario_title, noise_level, lambda_tikhonov)
     % Create heterogeneous parameters
     [kon_grid_heterog, koff_grid_heterog, smax_grid_heterog] = ...
         create_ground_truth_heterogeneity(gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
-    
-    % Preallocate for identifiability analysis
-    s_obs_final_base = zeros(n_exp,1); % Final s_obs values for baseline (each experiment)
-    
-    for exp_idx = 1:n_exp
-        setting = exp_settings(exp_idx);
-        fprintf('\nRunning Experiment %d\n', exp_idx);
-        
-        % Create homogeneous grids
-        [kon_grid_homog, koff_grid_homog, smax_grid_homog] = ...
-            create_homogeneous_grids(homog_params, gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
-        
-        % Create velocity profile
-        velocity_profile = create_velocity_profile(gridN_z, setting.max_velocity);
-        
-        % Time breaks and concentrations
-        t_breaks = [0, setting.pulse_times, setting.t_total];
-        concentrations = [setting.pulse_concs, setting.c_diss];
-        
-        % Initial condition for s (empty)
-        s0_grid = zeros(gridN_x, gridN_y, gridN_z);
-        
-        % Homogeneous simulation
-        [t_homog, ~, s_homog, K_homog, Q_homog] = simulate_3d_flow_model_with_pulses(...
-            gridN_x, gridN_y, gridN_z, kon_grid_homog, koff_grid_homog, smax_grid_homog, ...
-            velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid);
-        
-        % Heterogeneous simulation
-        [t_heterog, ~, s_heterog, K_heterog, Q_heterog] = simulate_3d_flow_model_with_pulses(...
-            gridN_x, gridN_y, gridN_z, kon_grid_heterog, koff_grid_heterog, smax_grid_heterog, ...
-            velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid);
-        
-        % ============== KERNEL-BASED COMPOSITE BEHAVIOR ================
-        % Extract adsorption region parameters
-        kon_homog_ads = kon_grid_homog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        smax_homog_ads = smax_grid_homog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        kon_heterog_ads = kon_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        smax_heterog_ads = smax_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        
-        % Extract adsorption region for state variables
-        K_homog_ads = K_homog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        Q_homog_ads = Q_homog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        s_homog_ads = s_homog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        
-        K_heterog_ads = K_heterog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        Q_heterog_ads = Q_heterog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        s_heterog_ads = s_heterog(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-        
-        % Get initial surface concentration (t=0)
-        s0_homog_ads = squeeze(s_homog_ads(1, :, :, :));
-        s0_heterog_ads = squeeze(s_heterog_ads(1, :, :, :));
-        
-        % Compute alpha (kon * smax) for each cell
-        alpha_homog_ads = kon_homog_ads .* smax_homog_ads;
-        alpha_heterog_ads = kon_heterog_ads .* smax_heterog_ads;
-        
-        % Reshape for broadcasting
-        alpha_homog_ads = reshape(alpha_homog_ads, [1, size(alpha_homog_ads)]);
-        alpha_heterog_ads = reshape(alpha_heterog_ads, [1, size(alpha_heterog_ads)]);
-        s0_homog_ads = reshape(s0_homog_ads, [1, size(s0_homog_ads)]);
-        s0_heterog_ads = reshape(s0_heterog_ads, [1, size(s0_heterog_ads)]);
-        
-        % Compute decay term: s0 * exp(-Q)
-        decay_term_homog = s0_homog_ads .* exp(-Q_homog_ads);
-        decay_term_heterog = s0_heterog_ads .* exp(-Q_heterog_ads);
-        
-        % Compute kernel term: alpha * K
-        kernel_term_homog = alpha_homog_ads .* K_homog_ads;
-        kernel_term_heterog = alpha_heterog_ads .* K_heterog_ads;
-        
-        % Sum over adsorption region
-        decay_sum_homog = squeeze(sum(decay_term_homog, [2,3,4]));
-        kernel_sum_homog = squeeze(sum(kernel_term_homog, [2,3,4]));
-        s_obs_homog = decay_sum_homog + kernel_sum_homog;
-        
-        decay_sum_heterog = squeeze(sum(decay_term_heterog, [2,3,4]));
-        kernel_sum_heterog = squeeze(sum(kernel_term_heterog, [2,3,4]));
-        s_obs_heterog = decay_sum_heterog + kernel_sum_heterog;
-        
-        % Direct s_obs for verification
-        s_obs_homog_direct = compute_s_obs(s_homog, ads_x_range, ads_y_range, ads_layer);
-        s_obs_heterog_direct = compute_s_obs(s_heterog, ads_x_range, ads_y_range, ads_layer);
-        
-        % Store final s_obs value for identifiability analysis
-        s_obs_final_base(exp_idx) = s_obs_heterog_direct(end);
-        
-        % Calculate discrepancy
-        discrepancy = trapz(t_heterog, (s_obs_homog_direct - s_obs_heterog_direct).^2);
-        fprintf('Composite behavior discrepancy: %.2e\n', discrepancy);
-        
-        % ====================== PLOTTING =========================
-        % Plot composite behavior
-        figure('Position', [100, 100, 1200, 800]);
-        
-        % Composite behavior comparison
-        subplot(2,2,1);
-        plot(t_homog, s_obs_homog_direct, 'b-', 'LineWidth', 2); hold on;
-        plot(t_heterog, s_obs_heterog_direct, 'r--', 'LineWidth', 1.5);
-        y_lims = [min([s_obs_homog_direct; s_obs_heterog_direct]), max([s_obs_homog_direct; s_obs_heterog_direct])];
-        for i = 1:length(setting.pulse_times)
-            line([setting.pulse_times(i), setting.pulse_times(i)], y_lims, ...
-                'Color', 'k', 'LineStyle', '--', 'LineWidth', 1);
-        end
-        xlabel('Time (s)'); ylabel('s_{obs}(t)');
-        title(sprintf('Exp %d: Composite Behavior (v_{max}=%.1f)', exp_idx, setting.max_velocity));
-        legend('Homogeneous', 'Heterogeneous (5% var)', 'Location', 'best');
-        grid on;
-        
-        % Homogeneous decomposition
-        subplot(2,2,3);
-        plot(t_homog, s_obs_homog_direct, 'k-', 'LineWidth', 2); hold on;
-        plot(t_homog, decay_sum_homog, 'b--', 'LineWidth', 1.5);
-        plot(t_homog, kernel_sum_homog, 'r--', 'LineWidth', 1.5);
-        xlabel('Time (s)'); ylabel('s_{obs}');
-        legend('Total', 'Decay Term', 'Kernel Term');
-        title('Homogeneous Case: Signal Decomposition');
-        grid on;
-        
-        % Heterogeneous decomposition
-        subplot(2,2,4);
-        plot(t_heterog, s_obs_heterog_direct, 'k-', 'LineWidth', 2); hold on;
-        plot(t_heterog, decay_sum_heterog, 'b--', 'LineWidth', 1.5);
-        plot(t_heterog, kernel_sum_heterog, 'r--', 'LineWidth', 1.5);
-        xlabel('Time (s)'); ylabel('s_{obs}');
-        legend('Total', 'Decay Term', 'Kernel Term');
-        title('Heterogeneous Case: Signal Decomposition');
-        grid on;
-        
-        % Discrepancy plot
-        subplot(2,2,2);
-        plot(t_heterog, s_obs_homog_direct - s_obs_heterog_direct, 'm-', 'LineWidth', 1.5);
-        xlabel('Time (s)'); ylabel('Difference');
-        title(sprintf('Homog - Heterog\nDiscrepancy: %.2e', discrepancy));
-        grid on;
-        
-        set(gcf, 'Name', sprintf('Experiment %d Results', exp_idx));
-    end
     
     % ============== IDENTIFIABILITY ANALYSIS ================
     fprintf('\nStarting Identifiability Analysis...\n');
@@ -559,123 +196,112 @@ function run_estimation_scenario(scenario_title, noise_level, lambda_tikhonov)
     ub = [repmat(ub_kon, num_ads_cells, 1); ...
           repmat(ub_koff, num_ads_cells, 1); ...
           repmat(ub_smax, num_ads_cells, 1)];
-    
-    % --- Tikhonov Regularization Setup ---
-    if lambda_tikhonov > 0
-        fprintf('Using SPATIAL regularization (lambda = %.2e)\n', lambda_tikhonov);
-        % ** NEW: Create the spatial regularization operator L **
-        L_matrix_reg = create_spatial_regularization_operator(ads_nx, ads_ny);
-        % For pure smoothness, the reference vector is zero.
-        log_params_ref_for_reg = zeros(N_params, 1);
-    else
-        fprintf('No regularization being used (lambda = 0)\n');
-        % L matrix is not needed, but must be passed to the function
-        L_matrix_reg = []; 
-        log_params_ref_for_reg = [];
-    end
 
-    % --- Create a handle to the plotter function with all necessary data ---
-    model_config.gridN_x = gridN_x; model_config.gridN_y = gridN_y; model_config.gridN_z = gridN_z;
-    model_config.ads_x_range = ads_x_range; model_config.ads_y_range = ads_y_range; model_config.ads_layer = ads_layer;
-    model_config.D_coeff = D_coeff; model_config.ru_to_m = ru_to_m;
     % Ensure this variable is available for error calculation
     true_kon_ads_region_for_error = kon_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
     true_koff_ads_region_for_error = koff_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
     true_smax_ads_region_for_error = smax_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
-
     true_params_vec = [true_kon_ads_region_for_error(:); true_koff_ads_region_for_error(:); true_smax_ads_region_for_error(:)]; 
-    % --- Setup for Video Recording ---
-    video_filename = sprintf('optimization_animation+%s.mp4', scenario_title);
-    try
-        video_obj = VideoWriter(video_filename, 'MPEG-4');
-        video_obj.FrameRate = 5;  % Adjust FrameRate for desired speed (e.g., 5-10)
-        video_obj.Quality = 95; % Adjust Quality (0-100, higher is better)
-    catch ME
-        warning('VideoWriter could not be created. Video will not be saved. Error: %s', ME.message);
-        video_obj = []; % Set to empty if creation fails
-    end
-    optim_plot_fun = @(log_params, optimValues, state) optimPlotter(log_params, optimValues, state, ...
-                                                              true_params_vec, ...
-                                                              exp_data, ...
-                                                              exp_settings, ...
-                                                              model_config, ...
-                                                              size(true_kon), size(true_koff), size(true_smax), ...
-                                                              video_obj); % Pass the video object as the last argument
 
-    % --- Add the 'OutputFcn' to your optimization options ---
-    optim_opts = optimoptions('lsqnonlin', ...
-        'Algorithm', 'trust-region-reflective', ...
-        'Display', 'iter', ...
-        'MaxIterations', 150, ...
-        'FunctionTolerance', 1e-12, ...
-        'StepTolerance', 1e-12, ...
-        'MaxFunctionEvaluations',3000, ...
-        'UseParallel',true,...
-        'FiniteDifferenceType', 'central', ...
-        'OutputFcn', optim_plot_fun); % This now points to our video-enabled plotter
+    % --- MCMC Setup ---
+    mcmc_options.n_iter = 20000; % Total iterations
+    mcmc_options.n_burn = 10000; % Burn-in iterations to discard
     
-    % Residual function with Tikhonov regularization
-    % Ensure n_exp is correctly passed (it's the number of experiments used for fitting)
-    num_fitting_experiments = n_exp; % Assuming you use all 'n_exp' for fitting
-
-    residual_fun_tikhonov = @(log_params) compute_residuals_log_tikhonov(...
-        log_params, exp_settings(1:num_fitting_experiments), exp_data(1:num_fitting_experiments), ... % Use only the selected/fitted experiments
-        gridN_x, gridN_y, gridN_z, ...
-        ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m, ...
-        num_fitting_experiments, ... % Pass n_exp correctly
-        lambda_tikhonov, log_params_ref_for_reg, L_matrix_reg); % Pass regularization params
+    % Use log-parameters for better sampling (ensures positivity)
+    initial_guess_vec = p0; % Start at true value for demonstration
     
-    fprintf('\nStarting Enhanced Parameter Identification with Tikhonov Regularization (lambda=%.1e)...\n', lambda_tikhonov);
+    % --- Define Priors and Likelihood ---
+    % 1. Prior on parameters (use spatial smoothing prior, like Tikhonov)
+    [kon_true_grid, koff_true_grid, smax_true_grid] = create_ground_truth_heterogeneity(...
+        gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
+    sz_kon = size(kon_true_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer));
+    L_matrix = create_spatial_regularization_operator(sz_kon(1), sz_kon(2));
+    prior_lambda = 5e-3; % Strength of smoothing prior (equivalent to regularization lambda)
+    log_prior_func = @(p) -0.5 * prior_lambda * sum((L_matrix * p).^2);
     
-    % Run optimization in log space
-    [opt_log_params_reg, resnorm_reg, residual_reg, exitflag_reg] = lsqnonlin(...
-    residual_fun_tikhonov, p0, lb, ub, optim_opts);
-    
-    % Convert optimized parameters back to linear space
-    opt_params_reg = 10.^opt_log_params_reg;
-    
-    % Split into parameter groups
-    opt_kon_reg = opt_params_reg(1:num_ads_cells);
-    opt_koff_reg = opt_params_reg(num_ads_cells+1:2*num_ads_cells);
-    opt_smax_reg = opt_params_reg(2*num_ads_cells+1:end);
-    
-    % Reshape to match adsorption region
-    opt_kon_reg = reshape(opt_kon_reg, size(true_kon));
-    opt_koff_reg = reshape(opt_koff_reg, size(true_koff));
-    opt_smax_reg = reshape(opt_smax_reg, size(true_smax));
-    
-    % True parameters as vector for comparison (already have true_params_vec)
-    
-    % Analyze regularized results
-    fprintf('\nOptimization Results (Tikhonov Regularized):\n');
-    fprintf('Final Residual Norm (augmented): %.4e\n', norm(residual_reg)); % This includes reg term
-    % To get model-only residual norm:
-    num_model_residuals = length(residual_reg) - N_params; % If L=I
-    if lambda_tikhonov > 0 && size(L_matrix_reg,1) == N_params % Assuming L_matrix_reg results in N_params rows for reg term
-        model_only_resnorm = norm(residual_reg(1:num_model_residuals));
-        fprintf('Model-Data Residual Norm (unaugmented part): %.4e\n', model_only_resnorm);
-    end
-    fprintf('Exit Flag: %d\n', exitflag_reg);
+    % 2. Likelihood of data given parameters
+    % Estimate noise variance from the known noise level for simplicity
+    all_data = cell2mat(exp_data');
+    noise_variance = (noise_level * max(abs(all_data))).^2;
+    log_likelihood_func = @(p) calculate_log_likelihood(10.^p, exp_settings, exp_data, ...
+        gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m, n_exp, noise_variance, sz_kon);
         
-    
-    % Calculate parameter errors for regularized solution
-    param_errors_reg = abs(opt_params_reg - true_params_vec) ./ true_params_vec;
-    fprintf('\nParameter Recovery Accuracy (Tikhonov Regularized):\n');
-    fprintf('Mean Relative Error: %.2f%%\n', 100*mean(param_errors_reg(~isinf(param_errors_reg) & ~isnan(param_errors_reg))));
-    fprintf('Max Relative Error: %.2f%%\n', 100*max(param_errors_reg(~isinf(param_errors_reg) & ~isnan(param_errors_reg))));
-    init_params = 10.^p0; % Initial guess in linear space
-    % Plot parameter recovery for regularized solution
-    plot_parameter_recovery(true_params_vec, opt_params_reg, init_params, ... % init_params is 10.^p0
-        size(true_kon), size(true_koff), size(true_smax),scenario_title);
-    sgtitle('Parameter Recovery Results (Tikhonov Regularized)'); % Add to distinguish plot
+    % 3. Posterior is sum of log-prior and log-likelihood
+    log_posterior_func = @(p) log_likelihood_func(p) + log_prior_func(p);
 
-    % Plot predicted vs "experimental" signals using regularized parameters
-    plot_signal_predictions([opt_kon_reg(:); opt_koff_reg(:); opt_smax_reg(:)], ...
-        exp_settings(1:num_fitting_experiments), exp_data(1:num_fitting_experiments), ...
-        gridN_x, gridN_y, gridN_z, ...
-        ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m, num_fitting_experiments,scenario_title);
-    sgtitle('Signal Prediction vs Experimental Data (Tikhonov Regularized Parameters)');
+    % --- Run MCMC Sampler ---
+    [chain, accept_rate] = run_metropolis_hastings_sampler(log_posterior_func, initial_guess_vec, mcmc_options);
+    
+    fprintf('MCMC finished. Acceptance rate: %.2f%%\n', accept_rate * 100);
+    
+    % --- Process and Plot Results ---
+    final_chain = chain(:, mcmc_options.n_burn+1:end); % Remove burn-in
+    
+    % Convert chain back to linear scale for plotting
+    final_chain_linear = 10.^final_chain; 
+    
+    plot_mcmc_results(final_chain_linear, true_params_vec, sz_kon, scenario_title);
 end
+
+function exp_settings = generate_experiments(M, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2)
+    % Generates M experiments with orthogonal concentration profiles and flow velocities
+    %
+    % Inputs:
+    %   M - Number of experiments
+    %   base_max_velocity - Reference flow velocity (e.g., 8.3)
+    %   T1, T2, T3 - Fixed pulse times
+    %   t_total - Total experiment duration
+    %   c_diss - Dissociation concentration
+    %   c1, c2 - Base concentrations
+    
+    exp_settings = struct(...
+        'pulse_times', {}, ...
+        'pulse_concs', {}, ...
+        't_total', {}, ...
+        'max_velocity', {}, ...
+        'c_diss', {} ...
+    );
+    
+    % Generate orthogonal concentration pairs using polar coordinates
+    angles = linspace(0, pi/2, M);  % Cover quadrant for positive concentrations
+    factors = linspace(0.3, 3, M);  % Concentration scaling factors
+    
+    for i = 1:M
+        if M ==1
+            M=2;
+        end
+        % Create orthogonal concentration profiles
+        conc_factor1 = factors(ceil(i/2)) * cos(angles(i));
+        conc_factor2 = factors(ceil(i/2)) * sin(angles(i));
+        
+        % Ensure minimum concentration variation
+        min_conc = 0.1 * min(c1, c2);
+        conc1 = max(c1 * (0.5 + conc_factor1), min_conc);
+        conc3 = max(c2 * (0.5 + conc_factor2), min_conc);
+        
+        % Create velocity profile (logarithmic spacing)
+        vel_min = 0.1 * base_max_velocity;
+        vel_max = 5.0 * base_max_velocity;
+        velocity = exp(log(vel_min) + (i-1)/(M-1) * (log(vel_max) - log(vel_min)));
+        
+        % Special patterns for every 3rd experiment
+        if mod(i,3) == 0
+            exp_settings(i).pulse_concs = [conc1, c2, conc3];  % Middle pulse active
+        elseif mod(i,4) == 0
+            exp_settings(i).pulse_concs = [c1, 0, conc3];      % First pulse fixed
+        else
+            exp_settings(i).pulse_concs = [conc1, 0, conc3];   % Standard pattern
+        end
+        
+        % Assign common parameters
+        exp_settings(i).pulse_times = [T1, T2, T3];
+        exp_settings(i).t_total = t_total;
+        exp_settings(i).max_velocity = velocity;
+        exp_settings(i).c_diss = c_diss;
+    end
+end
+% ================== NEW HELPER FUNCTIONS ==================
+% --- Modified compute_residuals_log function ---
 function L_full = create_spatial_regularization_operator(nx, ny)
     % Creates a sparse finite difference operator L = [Dx; Dy] for a single
     % parameter field, then combines them for all 3 parameter types.
@@ -707,46 +333,23 @@ function L_full = create_spatial_regularization_operator(nx, ny)
         size(L_full, 1), size(L_full, 2));
 end
 
-% calculate_curvature.m
-function [curvature, max_idx] = calculate_curvature(x, y)
-    % Ensure x and y are column vectors
-    x = x(:);
-    y = y(:);
-    
-    % Use finite differences to approximate derivatives
-    dx = gradient(x);
-    dy = gradient(y);
-    ddx = gradient(dx);
-    ddy = gradient(dy);
-    
-    % Curvature formula for a parametric curve
-    num = dx .* ddy - dy .* ddx;
-    den = (dx.^2 + dy.^2).^(3/2);
-    
-    curvature = abs(num ./ den);
-    
-    % The best point is usually not at the very ends, so we might
-    % ignore the first and last points.
-    [~, max_idx] = max(curvature(2:end-1));
-    max_idx = max_idx + 1; % Adjust index
-end
-function residuals_aug = compute_residuals_log_tikhonov(...
-    log_params, exp_settings, exp_data, ...
-    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m, n_exp, ...
-    lambda_reg, log_params_ref, L_matrix)
-    
-    params = 10.^log_params;
-    num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
-    ads_param_shape = [ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1];
-    
-    kon_ads = reshape(params(1:num_ads_cells), ads_param_shape);
-    koff_ads = reshape(params(num_ads_cells+1:2*num_ads_cells), ads_param_shape);
-    smax_ads = reshape(params(2*num_ads_cells+1:end), ads_param_shape);
-    
-    % --- Model-Data Mismatch (Fidelity Term) ---
-    model_residuals = [];
-    sim_data = cell(n_exp, 1);
 
+% =======================================================================
+% ===================== NEW MCMC HELPER FUNCTIONS =======================
+% =======================================================================
+
+function logL = calculate_log_likelihood(params_linear, exp_settings, exp_data, ...
+    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, D_coeff, ru_to_m, n_exp, noise_variance, sz_kon)
+    % Calculates the log-likelihood of the data given a set of parameters.
+    
+    % Reshape parameters
+    num_ads_cells = prod(sz_kon);
+    kon_ads = reshape(params_linear(1:num_ads_cells), sz_kon);
+    koff_ads = reshape(params_linear(num_ads_cells+1:2*num_ads_cells), sz_kon);
+    smax_ads = reshape(params_linear(2*num_ads_cells+1:end), sz_kon);
+    
+    % Simulate model to get predicted data
+    sim_data = cell(n_exp, 1);
     parfor i = 1:n_exp
         setting = exp_settings(i);
         [~, s_sim] = run_single_experiment(...
@@ -755,23 +358,138 @@ function residuals_aug = compute_residuals_log_tikhonov(...
         sim_data{i} = s_sim;
     end
     
+    % Calculate sum of squared errors
+    model_residuals = [];
     for i = 1:n_exp
         model_residuals = [model_residuals; (sim_data{i} - exp_data{i})];
     end
+    sum_sq_err = sum(model_residuals.^2);
+    
+    % Calculate log-likelihood assuming Gaussian noise
+    logL = -0.5 * sum_sq_err / noise_variance;
+end
 
-    % --- Tikhonov Regularization Term ---
-    if lambda_reg > 0 && ~isempty(L_matrix)
-        % ** MODIFIED: Penalize spatial differences using the L matrix **
-        % The penalty is applied to the log-parameters for better scaling.
-        % The reference vector log_params_ref should be zeros for pure smoothness.
-        reg_term_vector = sqrt(lambda_reg) * (L_matrix * (log_params(:) - log_params_ref(:)));
+function [chain, accept_rate] = run_metropolis_hastings_sampler(log_posterior_func, initial_params, mcmc_options)
+    % A simple Metropolis-Hastings MCMC sampler.
+    
+    n_iter = mcmc_options.n_iter;
+    num_params = length(initial_params);
+    
+    % Initialize chain
+    chain = zeros(num_params, n_iter);
+    chain(:, 1) = initial_params;
+    
+    % Proposal distribution settings
+    % The proposal scale is crucial and needs tuning.
+    % Start with a small scale. A more advanced sampler would adapt this.
+    proposal_scale = 0.005; 
+    proposal_cov = eye(num_params) * proposal_scale^2;
+    
+    % Calculate initial posterior
+    log_post_current = log_posterior_func(initial_params);
+    
+    accept_count = 0;
+    
+    fprintf('Starting MCMC sampling for %d iterations...\n', n_iter);
+    tic;
+    for i = 2:n_iter
+        if mod(i, 100) == 0
+            fprintf('  Iteration %d/%d (Acceptance: %.2f%%)\n', i, n_iter, (accept_count/(i-1))*100);
+        end
         
-        % Augment the residual vector
-        residuals_aug = [model_residuals; reg_term_vector];
-    else
-        % No regularization
-        residuals_aug = model_residuals;
+        % 1. Propose a new state
+        proposal = mvnrnd(chain(:, i-1), proposal_cov)';
+        
+        % 2. Calculate log posterior of the proposal
+        log_post_proposal = log_posterior_func(proposal);
+        
+        % 3. Calculate acceptance ratio
+        acceptance_ratio = exp(log_post_proposal - log_post_current);
+        
+        % 4. Accept or reject
+        if rand() < acceptance_ratio
+            % Accept
+            chain(:, i) = proposal;
+            log_post_current = log_post_proposal;
+            accept_count = accept_count + 1;
+        else
+            % Reject
+            chain(:, i) = chain(:, i-1);
+        end
     end
+    toc;
+    
+    accept_rate = accept_count / (n_iter - 1);
+end
+
+function plot_mcmc_results(chain_linear, true_params, sz_kon, scenario_title)
+    % Plots histograms of the posterior distributions and trace plots.
+    
+    num_kon = prod(sz_kon);
+    num_koff = prod(sz_kon);
+    
+    % Extract parameter groups from the chain
+    chain_kon = chain_linear(1:num_kon, :);
+    chain_koff = chain_linear(num_kon+1:num_kon+num_koff, :);
+    chain_smax = chain_linear(num_kon+num_koff+1:end, :);
+    
+    % Extract true values
+    true_kon = true_params(1:num_kon);
+    true_koff = true_params(num_kon+1:num_kon+num_koff);
+    true_smax = true_params(num_kon+num_koff+1:end);
+    
+    % --- Create Figure ---
+    figure('Position', [100, 100, 1500, 800], 'Name', 'MCMC Posterior Distributions');
+    
+    % Choose a few representative parameters to plot in detail
+    % For example, the first, middle, and last parameter of each type
+    num_params_per_type = num_kon;
+    indices_to_plot = unique([1, floor(num_params_per_type/2), num_params_per_type]);
+    
+    % Plot kon posteriors
+    for i = 1:length(indices_to_plot)
+        idx = indices_to_plot(i);
+        subplot(3, length(indices_to_plot), i);
+        histogram(chain_kon(idx, :), 50, 'Normalization', 'pdf');
+        hold on;
+        line([true_kon(idx) true_kon(idx)], ylim, 'Color', 'r', 'LineWidth', 2);
+        mean_val = mean(chain_kon(idx,:));
+        line([mean_val mean_val], ylim, 'Color', 'g', 'LineWidth', 2, 'LineStyle', '--');
+        title(sprintf('k_{on} (param %d)', idx));
+        if i == 1, legend('Posterior', 'True Value', 'Posterior Mean'); end
+    end
+    
+    % Plot koff posteriors
+    for i = 1:length(indices_to_plot)
+        idx = indices_to_plot(i);
+        subplot(3, length(indices_to_plot), length(indices_to_plot) + i);
+        histogram(chain_koff(idx, :), 50, 'Normalization', 'pdf');
+        hold on;
+        line([true_koff(idx) true_koff(idx)], ylim, 'Color', 'r', 'LineWidth', 2);
+        mean_val = mean(chain_koff(idx,:));
+        line([mean_val mean_val], ylim, 'Color', 'g', 'LineWidth', 2, 'LineStyle', '--');
+        title(sprintf('k_{off} (param %d)', idx));
+    end
+    
+    % Plot smax posteriors
+    for i = 1:length(indices_to_plot)
+        idx = indices_to_plot(i);
+        subplot(3, length(indices_to_plot), 2*length(indices_to_plot) + i);
+        histogram(chain_smax(idx, :), 50, 'Normalization', 'pdf');
+        hold on;
+        line([true_smax(idx) true_smax(idx)], ylim, 'Color', 'r', 'LineWidth', 2);
+        mean_val = mean(chain_smax(idx,:));
+        line([mean_val mean_val], ylim, 'Color', 'g', 'LineWidth', 2, 'LineStyle', '--');
+        title(sprintf('s_{max} (param %d)', idx));
+        xlabel('Parameter Value');
+    end
+    
+    sgtitle(['Posterior Distributions for Scenario: ' scenario_title], 'FontSize', 14, 'FontWeight', 'bold');
+    
+    % --- SAVE FIGURE ---
+    fig_filename = sprintf('MCMC_Posteriors_%s.png', strrep(strrep(scenario_title, ':', ''), ' ', '_'));
+    saveas(gcf, fig_filename);
+    fprintf('Saved posterior plot to %s\n', fig_filename);
 end
 
 
@@ -999,7 +717,7 @@ function [t, c_s, s, K, Q] = simulate_3d_flow_model_with_pulses(...
     y0 = [c_s0(:); s0(:); Q0(:); R0(:)];
     
     % Setup ODE options
-    options = odeset('RelTol', 1e-5, 'AbsTol', 1e-7);
+    options = odeset('RelTol', 1e-12, 'AbsTol', 1e-14);
     
     % Preallocate results
     t_all = [];
@@ -1013,7 +731,7 @@ function [t, c_s, s, K, Q] = simulate_3d_flow_model_with_pulses(...
         c0_seg = concentrations(seg);
         
         % Determine time points for segment
-        num_points = 500;
+        num_points = 1000;
         tspan = linspace(t_start, t_end, num_points);
         % Run simulation for segment
         [t_seg, y_seg] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, ...
