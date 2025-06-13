@@ -1,32 +1,37 @@
 function LineExperiments()
     clearvars; close all; clc;
     % Shared parameters
-    gridN_x = 15; gridN_y = 10; gridN_z = 3;
+    gridN_x = 22; gridN_y = 5; gridN_z = 3;
     ads_layer = 1;
-    ads_x_range = [5,8]; ads_y_range = [2,3];
+    ads_x_range = [5,15]; ads_y_range = [1,5];
 
     % --- MODIFIED --- Get number of lines in adsorption region
     ads_y_dim = ads_y_range(2) - ads_y_range(1) + 1;
 
     % Homogeneous parameters
-    homog_params = [9.4e3, 0.0078, 1.0]; % kon, koff, smax_total
+    homog_params = [9.4e3, 0.0078, 2960]; % kon, koff, smax_total
     
     % Fixed parameters
-    D_coeff = 6e-3;
-    ru_to_m = 1e-6;
+    D_coeff = 6e-5;
+    ru_to_m = 1e-10;
     base_max_velocity = 8.3;
+    grid_size_x = 11.0; % mm
+    grid_size_z = 0.3; % mm
     
+    dx = grid_size_x / gridN_x; % Size of one grid cell in x-direction (mm)
+    dz = grid_size_z / gridN_z; % Size of one grid cell in z-direction (mm)
     % Example pulse parameters
     n_exp = 1;
-    T1 = 2000; T2 = 2*T1; T3 = 3*T1;
+    T1 = 2200; T2 = 2*T1; T3 = 3*T1;
     t_total = 4*T1;
     c_diss = 0;
-    c1 = 3.3e-6;
-    c2 = 1e-6;
+    c1 = 330e-5;
+    c2 = 100e-5;
     exp_settings = generate_experiments(n_exp, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2);
     model_config.gridN_x = gridN_x;
     model_config.gridN_y = gridN_y;
     model_config.gridN_z = gridN_z;
+    model_config.dx = dx; model_config.dz = dz;
     model_config.ads_x_range = ads_x_range;
     model_config.ads_y_range = ads_y_range;
     model_config.ads_layer = ads_layer;
@@ -35,6 +40,54 @@ function LineExperiments()
     % Create ground truth 2D heterogeneous parameters
     [kon_grid_heterog, koff_grid_heterog, smax_grid_heterog] = ...
         create_ground_truth_heterogeneity(gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
+   % =========================================================================
+    % --- NOVA SEÇÃO: VISUALIZAÇÃO DAS SUPERFícIES DOS PARÂMETROS ---
+    % =========================================================================
+    fprintf('\nVisualizando as superfícies de parâmetros geradas...\n');
+    
+    % Crie uma grade de coordenadas X e Y para o plot 3D
+    [X, Y] = meshgrid(1:gridN_y, 1:gridN_x);
+    
+    % Extraia a camada 2D de cada parâmetro que contém os valores de adsorção
+    kon_slice = squeeze(kon_grid_heterog(:, :, ads_layer));
+    koff_slice = squeeze(koff_grid_heterog(:, :, ads_layer));
+    smax_slice = squeeze(smax_grid_heterog(:, :, ads_layer));
+    
+    % Crie a figura e os subplots
+    figure('Name', 'Visualização dos Parâmetros da Superfície', 'Position', [100, 100, 1600, 500]);
+    
+    % --- Gráfico de Superfície para k_on ---
+    subplot(1, 3, 1);
+    surf(X, Y, kon_slice);
+    title('Superfície do Parâmetro k_{on}');
+    xlabel('Posição da Linha (y)');
+    ylabel('Posição ao Longo do Fluxo (x)');
+    zlabel('Valor de k_{on}');
+    colorbar;
+    view(30, 45); % Ajusta o ângulo da câmera para melhor visualização
+    
+    % --- Gráfico de Superfície para k_off ---
+    subplot(1, 3, 2);
+    surf(X, Y, koff_slice);
+    title('Superfície do Parâmetro k_{off}');
+    xlabel('Posição da Linha (y)');
+    ylabel('Posição ao Longo do Fluxo (x)');
+    zlabel('Valor de k_{off}');
+    colorbar;
+    view(30, 45);
+    
+    % --- Gráfico de Superfície para s_max ---
+    subplot(1, 3, 3);
+    surf(X, Y, smax_slice);
+    title('Superfície do Parâmetro s_{max}');
+    xlabel('Posição da Linha (y)');
+    ylabel('Posição ao Longo do Fluxo (x)');
+    zlabel('Valor de s_{max}');
+    colorbar;
+    view(30, 45);
+    
+    sgtitle('Visualização 3D da Heterogeneidade dos Parâmetros na Superfície', 'FontSize', 16, 'FontWeight', 'bold');
+    
     % =========================================================================
     % --- STEP 1: GENERATE "EXPERIMENTAL" DATA FIRST ---
     % By creating this data upfront, we know the exact size of all outputs
@@ -53,11 +106,11 @@ function LineExperiments()
         
         [t_exp, ~, s_heterog_exp] = simulate_3d_flow_model_with_pulses(...
             gridN_x, gridN_y, gridN_z, kon_grid_heterog, koff_grid_heterog, smax_grid_heterog, ...
-            velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid);
+            velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid,dx,dz);
         
         s_obs_by_line_clean = compute_s_obs_by_line(s_heterog_exp, ads_x_range, ads_y_range, ads_layer);
         
-        noise_level = 0.02;
+        noise_level = 0.01;
         noise_matrix = 1 + noise_level * randn(size(s_obs_by_line_clean));
         
         data_struct.time = t_exp;
@@ -213,7 +266,7 @@ function LineExperiments()
     % These correspond to kon=[1e2, 1e7], koff=[1e-5, 1], smax_per_line=[1e-4, 5]
     lb_kon = log10(1e3);  ub_kon = log10(1e7);
     lb_koff = log10(1e-6); ub_koff = log10(1e-1); 
-    lb_smax = log10(1e-4); ub_smax = log10(2);   
+    lb_smax = log10(1e-4); ub_smax = log10(3000);   
     
     lb = [repmat(lb_kon, ads_y_dim, 1); ...
           repmat(lb_koff, ads_y_dim, 1); ...
@@ -240,8 +293,8 @@ function LineExperiments()
         'Display', 'iter', ...
         'MaxIterations', 50, ...
         'UseParallel', true, ...
-        'FunctionTolerance', 1e-8, ...
-        'StepTolerance', 1e-8, ...
+        'FunctionTolerance', 1e-10, ...
+        'StepTolerance', 1e-10, ...
         'OutputFcn', optim_plot_fun); % This tells lsqnonlin to call our plotter
         
     % --- MODIFIED --- The residual function remains the same
@@ -255,38 +308,167 @@ function LineExperiments()
     
     % Plot recovery of the 1D parameters
     plot_parameter_recovery_1D(p_true_1D, opt_params_1D, 10.^p0, ads_y_dim);
- % =========================================================================
-    % --- FINAL VALIDATION: GENERATE AND PROCESS VIDEO ---
     % =========================================================================
-    fprintf('\n--- Starting Full Procedure Validation ---\n');
+    % --- FINAL, PHYSICALLY-ACCURATE VALIDATION WORKFLOW ---
+    % =========================================================================
+    fprintf('\n--- Starting Full Physical Model Validation ---\n');
 
-    % --- Step 1: Get the high-resolution data from our initial simulation ---
-    % We use the clean data from the first experiment as our ground truth
-    t_exp = exp_data{1}.time;
-    s_obs_by_line_clean = exp_data{1}.signals_clean;
+    % --- Step 1: Define Optical and Physical Constants ---
+    fprintf('Defining optical parameters...\n');
+    wavelength = 670; % nm
+    d1 = 50;          % Gold film thickness (nm)
+    % The analyte layer (n2) thickness is effectively infinite for the evanescent wave
+    d2 = 1000;        % Effectively infinite analyte layer (nm)
     
-    % To create the video, we need the full 2D data that was used to generate
-    % the line-averaged sensorgrams. We need to re-run that one simulation.
-    fprintf('Re-running ground truth simulation to get full 2D data...\n');
-    setting = exp_settings(1);
-    velocity_profile = create_velocity_profile(gridN_z, setting.max_velocity);
-    t_breaks = [0, setting.pulse_times, setting.t_total];
-    concentrations = [setting.pulse_concs, setting.c_diss];
-    s0_grid = zeros(gridN_x, gridN_y, gridN_z);
-    [~, ~, s_heterog_ground_truth] = simulate_3d_flow_model_with_pulses(...
-            gridN_x, gridN_y, gridN_z, kon_grid_heterog, koff_grid_heterog, smax_grid_heterog, ...
-            velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid);
+    n0 = sqrt(2.3104);         % Optical substrate (Prism)
+    n1 = sqrt(-14.379 + 1.0084j); % Gold film (complex RI)
+    n_bulk = sqrt(1.7876);         % Flow cell solution (baseline buffer)
+    
+    % Define the angular range for SPR curve calculation
+    angle_range = linspace(65, 80, 500); % [start_angle, end_angle, num_points]
+    
+    % Define the conversion factor from Response Units (RU) to Refractive Index Units (RIU)
+    % 1000 RU = 0.001 RIU change
+    RU_TO_RIU = 0.001 / 1000;
+    
+    % --- Step 2: Get the Ground-Truth Sensorgram Data (in RU) ---
+    % We use the clean, line-averaged data from our initial simulation
+    t_exp = exp_data{1}.time;
+    s_obs_ru = exp_data{1}.signals_clean; % Sensorgrams in RU
+
+    % --- Step 3: Convert Sensorgrams to Resonance Angles via Fresnel Model ---
+    fprintf('Processing %d time points for %d lines...\n', size(s_obs_ru, 1), size(s_obs_ru, 2));
+    
+    % Preallocate matrix to store the calculated resonance angle for each line at each time
+    theta_spr_vs_time = zeros(size(s_obs_ru)); formula_response_vs_time = zeros(size(s_obs_ru));
+    baseline_offset = calculate_sensorgram_from_formula(n_bulk, n_bulk, n1, d2, wavelength);
+    fprintf('Calculated baseline offset of %.4f will be subtracted.\n', baseline_offset);
+    tic;
+    fprintf('Generating SPR IMAGES FOR VIDEO...\n');
+    video_frames_folder = 'spr_video_frames';
+    if ~exist(video_frames_folder, 'dir')
+        mkdir(video_frames_folder);
+    else
+        % Opcional: Limpa a pasta de frames antigos antes de começar
+        delete(fullfile(video_frames_folder, '*.png'));
+    end
+    num_time_points = size(s_obs_ru, 1);    % Loop through each time point
+    fig_handle = figure('Visible', 'off'); % Figura invisível
+    ax = gca;
+    ax.Position = [0 0 1 1]; % Eixos preenchem toda a figura
+    axis(ax, 'off'); % Remove os eixos e bordas brancas
+
+    % Plota a primeira imagem para inicializar o objeto de imagem e obter um handle
+    initial_image_matrix = zeros(ads_y_dim, length(angle_range));
+    h_img = imagesc(ax, angle_range, 1:ads_y_dim, initial_image_matrix);
+    colormap(ax, 'gray');
+    
+    % Define os limites de cor uma vez para evitar o auto-ajuste
+    % Precisamos calcular o min/max da refletividade em todo o experimento
+    % Para simplificar, vamos usar [0, 1], que é o range padrão da refletividade.
+    caxis(ax, [0 1]);
+    for t_idx = 1:size(s_obs_ru, 1)
+        spr_image_matrix = zeros(ads_y_dim, length(angle_range));
+        % Loop through each line
+        parfor j_idx = 1:size(s_obs_ru, 2)
+            % 1. Get the surface concentration in RU for this line at this time
+            current_ru = s_obs_ru(t_idx, j_idx);
             
-    % --- Step 2: Create and save the SPRi video ---
-    video_filename = 'spr_simulation_video.mp4';
-    create_spr_video(t_exp, s_heterog_ground_truth, model_config, video_filename);
+            % 2. Convert RU to the refractive index of the analyte layer (n2)
+            n2_analyte = n_bulk + (current_ru*RU_TO_RIU);
+            
+            % 3. Calculate the full SPR curve and find the resonance angle
+            [Rp_curve, resonance_angle] = fresnel_spr_curve(angle_range, n0, n1, n2_analyte, n_bulk, d1, d2, wavelength);
+            spr_image_matrix(j_idx, :) = Rp_curve;
+            % 4. Store the result
+            theta_spr_vs_time(t_idx, j_idx) = resonance_angle;
 
-     % --- Step 3: Extract sensorgrams from the video we just created ---
-    % Note: The function now only returns the signals.
-    extracted_sensorgrams = extract_sensorgrams_from_video(video_filename);
+            % 2. Calculate the sensorgram point using the new function
+            delta_neff = calculate_sensorgram_from_formula(n2_analyte, n_bulk, n1, d2, wavelength);
+            
+            % 3. Store the result
+            formula_response_vs_time(t_idx, j_idx) = delta_neff- baseline_offset;
+        end
+        % Atualize apenas os dados ('CData') do objeto de imagem, não recrie o plot
+        set(h_img, 'CData', spr_image_matrix);
+        
+        % Capture o frame da figura
+        frame = getframe(fig_handle);
+        
+        % Salve o frame usando 'imwrite', que é muito mais rápido que 'saveas'
+        filename = fullfile(video_frames_folder, sprintf('frame_%04d.png', t_idx));
+        imwrite(frame.cdata, filename);
+        % --- Opcional: Exibir um progresso ---
+        if mod(t_idx, 100) == 0
+            fprintf('Gerado frame %d de %d...\n', t_idx, num_time_points);
+        end
+    end
+    toc;
+    close(fig_handle);
+    figure('Name', 'SPR Curves for All Lines at Max Response');
+    hold on;
+    for j_idx = 1:ads_y_dim
+        plot(angle_range, spr_image_matrix(j_idx, :), 'LineWidth', 2, 'DisplayName', sprintf('Linha %d', j_idx));
+    end
+    hold off;
+    grid on;
+    xlabel('Ângulo de Incidência (graus)');
+    ylabel('Refletividade');
+    legend('Location', 'best');
+    ylim([0, 1]);
 
-    % --- Step 4: Validate and Compare ---
-    figure('Name', 'Validation: Direct vs. Video-Extracted Sensorgrams', 'Position', [300, 300, 1400, 700]);
+     % =========================================================================
+    % --- ETAPA 2: CRIAR O VÍDEO A PARTIR DOS FRAMES SALVOS ---
+    % =========================================================================
+    fprintf('\n--- Iniciando a criação do vídeo a partir dos frames salvos ---\n');
+    tic;
+
+    % --- Configura o objeto VideoWriter ---
+    video_filename = 'spri_simulation_final.mp4';
+    outputVideo = VideoWriter(video_filename, 'MPEG-4');
+    outputVideo.FrameRate = 30;
+    open(outputVideo);
+
+    % --- Pega a lista de todos os arquivos de imagem ---
+    image_files_struct = dir(fullfile(video_frames_folder, '*.png'));
+    image_files_cell = {image_files_struct.name};
+    
+    % --- Ordena os nomes dos arquivos numericamente (robusto) ---
+    % Extrai os números dos nomes dos arquivos
+    str_nums = regexp(image_files_cell, '\d+', 'match', 'once');
+    num_vals = str2double(str_nums);
+    
+    % Ordena os números e pega os índices da ordenação
+    [~, sorted_indices] = sort(num_vals);
+    
+    % Usa os índices para ordenar a lista de nomes de arquivos
+    sorted_image_files = image_files_cell(sorted_indices);
+    
+    % --- Loop através dos arquivos ordenados para escrever o vídeo ---
+    fprintf('Lendo %d frames para criar o vídeo...\n', length(sorted_image_files));
+    for i = 1:length(sorted_image_files)
+        % Monta o caminho completo para o arquivo de imagem
+        img_path = fullfile(video_frames_folder, sorted_image_files{i});
+        
+        % Lê a imagem
+        img = imread(img_path);
+        
+        % Escreve o frame no vídeo
+        writeVideo(outputVideo, img);
+    end
+
+    % --- Finaliza e fecha o arquivo de vídeo ---
+    close(outputVideo);
+    toc;
+    fprintf('\nVídeo salvo com sucesso como "%s".\n', video_filename);
+
+   
+
+    % --- Step 4: Plot the "Proper" Sensorgram and Validate ---
+    % We plot the Resonance Angle directly. To validate, we overlay
+    % the original RU data on a second y-axis to show the shapes match.
+    
+    figure('Name', 'Proper Sensorgram: Resonance Angle vs. Time', 'Position', [300, 300, 1400, 700]);
     
     lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
     
@@ -294,28 +476,91 @@ function LineExperiments()
         subplot(1, length(lines_to_plot), i);
         line_idx = lines_to_plot(i);
         
-        % Normalize both signals to be between 0 and 1 for easy comparison of shape
-        original_signal = s_obs_by_line_clean(:, line_idx);
-        original_norm = (original_signal - min(original_signal)) / (max(original_signal) - min(original_signal));
+        % --- This is the proper, physically-correct sensorgram ---
+        plot(t_exp, theta_spr_vs_time(:, line_idx), 'r-', 'LineWidth', 2, 'DisplayName', 'Sensorgram (Resonance Angle)');
         
-        extracted_signal = extracted_sensorgrams(:, line_idx);
-        extracted_norm = (extracted_signal - min(extracted_signal)) / (max(extracted_signal) - min(extracted_signal));
-        
-        % --- THE FIX IS HERE ---
-        % Plot BOTH datasets against the ORIGINAL time vector, t_exp.
-        plot(t_exp, original_norm, 'b-', 'LineWidth', 3, 'DisplayName', 'Direct from Simulation');
-        hold on;
-        plot(t_exp, extracted_norm, 'r--', 'LineWidth', 2, 'DisplayName', 'Extracted from Video');
-        
-        title(sprintf('Comparison for Line %d', line_idx));
-        xlabel('Time (s)');
-        ylabel('Normalized Response');
-        legend('Location', 'best');
         grid on;
+        xlabel('Time (s)');
+        ylabel('Resonance Angle (degrees)');
+        title(sprintf('Proper Sensorgram for Line %d', line_idx));
+        
+        % --- For validation, plot the original RU data on a separate y-axis ---
+        yyaxis right % Activate the right y-axis
+        plot(t_exp, s_obs_ru(:, line_idx), 'b--', 'LineWidth', 1.5, 'DisplayName', 'Original Simulation (RU)');
+        ylabel('Response Units (RU)');
+        
+        legend('Location', 'best');
         xlim([0, t_exp(end)]);
     end
-    sgtitle('Validation: The line-average model correctly represents the physical process', 'FontSize', 16);
+    sgtitle('Final Validation: The Physically Correct Sensorgram (Angle vs. Time)', 'FontSize', 16);
+    % --- Step 4: Plot the Sensorgram from Your Formula ---
+    % =========================================================================
+    % --- FINAL PLOTTING OF RESULTS ---
+    % =========================================================================
+    
+    % --- Step 1: Calculate the Global Sensorgram ---
+    % We sum the responses from all lines at each time point by summing along
+    % the second dimension (the columns) of the results matrix.
+    global_sensorgram = sum(formula_response_vs_time, 2);
 
+    % --- Step 2: Create the Figure and Subplots ---
+    figure('Name', 'Final Sensorgram Results from Formula', 'Position', [200, 200, 1400, 600]);
+
+    % --- Plot 1: All Individual Line Sensorgrams ---
+    subplot(1, 2, 1);
+    plot(t_exp, formula_response_vs_time, 'LineWidth', 1.5);
+    grid on;
+    title('Individual Line Sensorgrams');
+    xlabel('Time (s)');
+    ylabel('Change from Baseline (\Delta{N}_s^{eff})');
+    xlim([0, t_exp(end)]);
+    % Optional: Add a legend if you have a small number of lines
+    if ads_y_dim <= 10
+        legend(arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false), 'Location', 'best');
+    end
+
+    % --- Plot 2: Global (Summed) Sensorgram ---
+    subplot(1, 2, 2);
+    plot(t_exp, global_sensorgram, 'r-', 'LineWidth', 2);
+    grid on;
+    title('Global (Summed) Sensorgram');
+    xlabel('Time (s)');
+    ylabel('Total Change (\Sigma \Delta{N}_s^{eff})');
+    xlim([0, t_exp(end)]);
+    
+    sgtitle('Final Sensorgrams Calculated from Analytical Formula', 'FontSize', 16, 'FontWeight', 'bold');
+    
+    absolute_neff_vs_time = formula_response_vs_time + n_bulk;
+
+    % --- Step 2: Calculate the Global (Summed) Absolute N_s_eff ---
+    global_absolute_neff = n_bulk+global_sensorgram;
+
+    % --- Step 3: Create the Figure and Subplots ---
+    figure('Name', 'Absolute Effective RI Sensorgrams', 'Position', [200, 200, 1400, 600]);
+
+    % --- Plot 1: All Individual Line Sensorgrams ---
+    subplot(1, 2, 1);
+    plot(t_exp, absolute_neff_vs_time, 'LineWidth', 1.5);
+    grid on;
+    title('Individual Line Sensorgrams (Absolute N_s^{eff})');
+    xlabel('Time (s)');
+    ylabel('Absolute Effective RI ({N}_s^{eff})');
+    xlim([0, t_exp(end)]);
+    % Optional: Add a legend if you have a small number of lines
+    if ads_y_dim <= 10
+        legend(arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false), 'Location', 'best');
+    end
+
+    % --- Plot 2: Global (Summed) Sensorgram ---
+    subplot(1, 2, 2);
+    plot(t_exp, global_absolute_neff, 'r-', 'LineWidth', 2);
+    grid on;
+    title('Global (Summed) Sensorgram');
+    xlabel('Time (s)');
+    ylabel('Absolute Effective RI (\Sigma {N}_s^{eff})');
+    xlim([0, t_exp(end)]);
+    
+    sgtitle('Final Sensorgrams Plotted as Absolute N_s^{eff}', 'FontSize', 16, 'FontWeight', 'bold');
 end
 function s_obs_matrix = compute_s_obs_by_line(s_grid, ads_x_range, ads_y_range, ads_layer)
 % Computes a matrix of sensorgrams, one for each line in the y-direction.
@@ -449,7 +694,7 @@ function [t, s_obs_by_line] = run_single_experiment_1D_model(p_1D, setting, mode
 % Runs a simulation using the 1D heterogeneous parameter model.
     ads_y_dim = model_config.ads_y_range(2) - model_config.ads_y_range(1) + 1;
     ads_x_dim = model_config.ads_x_range(2) - model_config.ads_x_range(1) + 1;
-
+    dx = model_config.dx; dz = model_config.dz;
     % Unpack 1D parameter vector
     kon_1D  = p_1D(1:ads_y_dim);
     koff_1D = p_1D(ads_y_dim+1 : 2*ads_y_dim);
@@ -476,7 +721,7 @@ function [t, s_obs_by_line] = run_single_experiment_1D_model(p_1D, setting, mode
     [t, ~, s] = simulate_3d_flow_model_with_pulses(...
         model_config.gridN_x, model_config.gridN_y, model_config.gridN_z, ...
         kon_grid, koff_grid, smax_grid, velocity_profile, ...
-        t_breaks, concentrations, model_config.D_coeff, model_config.ru_to_m, s0_grid);
+        t_breaks, concentrations, model_config.D_coeff, model_config.ru_to_m, s0_grid,dx,dz);
     
     % Compute the per-line observed signal
     s_obs_by_line = compute_s_obs_by_line(s, model_config.ads_x_range, ...
@@ -551,27 +796,47 @@ function velocity_profile = create_velocity_profile(nz, max_velocity)
 end
 
 function [kon_grid, koff_grid, smax_grid] = create_ground_truth_heterogeneity(nx, ny, nz, ads_x_range, ads_y_range, ads_layer)
+    % Parâmetros base
     kon_base = 9.4e3;
     koff_base = 0.0078;
-    smax_total = 1.0;
-    num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
+    smax_total = 2960;
     
+    % Dimensões da região de adsorção
+    num_x_ads = ads_x_range(2) - ads_x_range(1) + 1;
+    num_y_ads = ads_y_range(2) - ads_y_range(1) + 1; % Número de linhas
+
+    % Inicializa as matrizes de parâmetros
     kon_grid = zeros(nx, ny, nz);
     koff_grid = zeros(nx, ny, nz);
     smax_grid = zeros(nx, ny, nz);
     
-    rng(42);
-    kon_vals = kon_base * (1 + 0.05*randn(ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1));
-    koff_vals = koff_base * (1 + 0.05*randn(size(kon_vals)));
-    smax_vals = (smax_total/num_ads_cells) * (1 + 0.05*randn(size(kon_vals)));
+    rng(42); % Para resultados aleatórios reprodutíveis
+
+    % --- LÓGICA MODIFICADA PARA HETEROGENEIDADE 1D (POR LINHA) ---
+
+    % 1. Gere um VETOR de valores aleatórios, um para cada LINHA (direção y).
+    kon_rand_vec = randn(1, num_y_ads);
+    koff_rand_vec = randn(1, num_y_ads);
+    smax_rand_vec = randn(1, num_y_ads);
+
+    % 2. Use 'repmat' para replicar o vetor de linha, criando uma matriz
+    kon_perturbation = repmat(kon_rand_vec, num_x_ads, 1);
+    koff_perturbation = repmat(koff_rand_vec, num_x_ads, 1);
+    smax_perturbation = repmat(smax_rand_vec, num_x_ads, 1);
+
+    % 3. Crie as matrizes de parâmetros heterogêneos em 1D
+    kon_vals = kon_base * (1 + 0.05 * kon_perturbation);
+    koff_vals = koff_base * (1 + 0.05 * koff_perturbation);
+    smax_vals = (smax_total / num_y_ads) * (1 + 0.05 * smax_perturbation);
     
+    % Atribui os valores à região de adsorção na grade completa
     kon_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = kon_vals;
     koff_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = koff_vals;
     smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = smax_vals;
 end
 
 function [t_all, c_s, s] = simulate_3d_flow_model_with_pulses(...
-    nx, ny, nz, kon_grid, koff_grid, smax_grid, velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid)
+    nx, ny, nz, kon_grid, koff_grid, smax_grid, velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid,dx,dz)
     
     % Initialize state variables
     num_cells = nx * ny * nz;
@@ -613,7 +878,7 @@ function [t_all, c_s, s] = simulate_3d_flow_model_with_pulses(...
         
         % Run simulation for segment
         [t_seg, y_seg] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, ...
-            kon_grid, koff_grid, smax_grid, c0_seg, D_coeff, ru_to_m), tspan, y0, options);
+            kon_grid, koff_grid, smax_grid, c0_seg, D_coeff, ru_to_m,dx, dz), tspan, y0, options);
         
         % --- START: MODIFIED RESULT HANDLING ---
         
@@ -655,7 +920,7 @@ function [t_all, c_s, s] = simulate_3d_flow_model_with_pulses(...
     %K = exp(-Q) .* R;
 end
 
-function dydt = ode_system(~, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m)
+function dydt = ode_system(~, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m, dx, dz)
     num_cells = nx * ny * nz;
     c_s = reshape(y(1:num_cells), [nx, ny, nz]);
     s = reshape(y(num_cells + 1:2*num_cells), [nx, ny, nz]);
@@ -670,18 +935,18 @@ function dydt = ode_system(~, y, nx, ny, nz, velocity_profile, kon_grid, koff_gr
 
     % Diffusion terms
     d2c_dx2 = zeros(nx, ny, nz);
-    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:));
+    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:))/ (dx^2);
     
     d2c_dz2 = zeros(nx, ny, nz);
-    d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
-    d2c_dz2(:,:,1) = c_s(:,:,2) - 2*c_s(:,:,1) + c_s(:,:,1);
-    d2c_dz2(:,:,end) = c_s(:,:,end-1) - 2*c_s(:,:,end) + c_s(:,:,end-1);
+    d2c_dz2(:,:,2:end-1) = (c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2))/ (dz^2);
+    d2c_dz2(:,:,1) = (c_s(:,:,2) - 2*c_s(:,:,1) + c_s(:,:,1))/ (dz^2);
+    d2c_dz2(:,:,end) = (c_s(:,:,end-1) - 2*c_s(:,:,end) + c_s(:,:,end-1))/ (dz^2);
     
     dcsdt = D_coeff * (d2c_dx2 + d2c_dz2);
     
     % Advection
     dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + ...
-        bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
+        bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)/ (dx)));
     
     % Adsorption kinetics
     available_sites = max(smax_grid - s, 0);
@@ -817,75 +1082,93 @@ function updatePlots(current_log_params, optimVals, h)
     drawnow; % Force the figure window to update
 end
 
+% --- NEW HELPER FUNCTION 1: Fresnel Model for 4 Layers ---
+function [Rp, resonance_angle] = fresnel_spr_curve(angles_deg, n0, n1, n2, n3, d1, d2, wavelength)
+% Calculates the SPR reflectivity curve for p-polarized light in a 4-layer system.
+% This is a MATLAB implementation of the provided Python/JAX Fresnel model.
 
-% --- FINAL DEFINITIVE VERSION: Create Clean, Lossless, REGION-SPECIFIC Video ---
-function create_spr_video(time_vector, s_heterog_data, model_config, filename)
-    fprintf('Creating CLEAN, LOSSLESS, REGION-SPECIFIC SPRi simulation video...\n');
+    % Convert input angles from degrees to radians
+    th = deg2rad(angles_deg);
     
-    % Use the lossless, archival video format
-    video_obj = VideoWriter(filename, 'Archival');
-    video_obj.FrameRate = 30;
-    open(video_obj);
+    % Initialize output array for reflectivity
+    Rp = zeros(size(th));
     
-    fig = figure('Name', 'SPRi Video Generation');
-    ax = gca;
-    ax.Position = [0 0 1 1];
-    axis off; 
-    
-    % --- THE FIX IS HERE (Part 1): We will work with the sensible region data only ---
-    ads_x = model_config.ads_x_range(1):model_config.ads_x_range(2);
-    ads_y = model_config.ads_y_range(1):model_config.ads_y_range(2);
-    s_sensible_data = squeeze(s_heterog_data(:, ads_x, ads_y, model_config.ads_layer));
-    
-    min_val = min(s_sensible_data(:));
-    max_val = max(s_sensible_data(:));
-    if isempty(max_val) || max_val == min_val, max_val = min_val + 1; end
-    
-    % --- Initial Plot Setup ---
-    initial_frame = squeeze(s_sensible_data(1, :, :));
-    h_img = imagesc(ax, initial_frame');
-    
-    set(ax, 'YDir', 'normal');
-    caxis(ax, [min_val, max_val]);
-    colormap(ax, 'jet');
-
-    % --- Loop Through Time and Write Clean Frames of the SENSIBLE REGION ---
-    for t_idx = 1:length(time_vector)
-        % --- THE FIX IS HERE (Part 2): Select the sensible region for this time step ---
-        current_sensible_frame = squeeze(s_sensible_data(t_idx, :, :));
+    % This loop is the equivalent of jax.vmap, applying the calculation for each angle
+    for i = 1:length(th)
+        current_th = th(i);
         
-        set(h_img, 'CData', current_sensible_frame');
+        % Check for TIR condition to avoid complex numbers in sqrt where not needed
+        sin_th_sq = (n0 * sin(current_th))^2;
         
-        frame = getframe(fig); 
-        writeVideo(video_obj, frame);
+        % Compute q values for each layer (using complex numbers for generality)
+        q0 = sqrt(n0^2 - sin_th_sq + 0i) / n0^2;
+        q1 = sqrt(n1^2 - sin_th_sq + 0i) / n1^2;
+        q2 = sqrt(n2^2 - sin_th_sq + 0i) / n2^2;
+        q3 = sqrt(n3^2 - sin_th_sq + 0i) / n3^2;
+        
+        % Compute beta values for layers 1 and 2
+        beta1 = 2 * pi * d1 * sqrt(n1^2 - sin_th_sq + 0i) / wavelength;
+        beta2 = 2 * pi * d2 * sqrt(n2^2 - sin_th_sq + 0i) / wavelength;
+        
+        % Layer matrices M1 and M2
+        M1 = [cos(beta1), -1j * sin(beta1) / q1; 
+              -1j * q1 * sin(beta1), cos(beta1)];
+          
+        M2 = [cos(beta2), -1j * sin(beta2) / q2; 
+              -1j * q2 * sin(beta2), cos(beta2)];
+        
+        % Overall matrix product
+        M = M1 * M2;
+        
+        % Reflection coefficient for p-polarized light
+        numerator = (M(1,1) + M(1,2) * q3) * q0 - (M(2,1) + M(2,2) * q3);
+        denominator = (M(1,1) + M(1,2) * q3) * q0 + (M(2,1) + M(2,2) * q3);
+        rp = numerator / denominator;
+        
+        % Reflectivity is the squared magnitude of the reflection coefficient
+        Rp(i) = abs(rp)^2;
     end
     
-    close(video_obj);
-    close(fig);
-    fprintf('CLEAN sensible-region video successfully saved as %s.\n', filename);
+    % Find the resonance angle (angle of minimum reflectivity)
+    [~, min_idx] = min(Rp);
+    resonance_angle = angles_deg(min_idx);
 end
 
+% --- NEW HELPER FUNCTION FOR THE ANALYTICAL APPROXIMATION ---
+% --- NEW HELPER FUNCTION FOR YOUR SPECIFIED FORMULA ---
+function delta_neff = calculate_sensorgram_from_formula(n_analyte, n_bulk, n_metal_complex, d_analyte, lambda)
+% Calculates the sensorgram response based on the specific analytical
+% formula provided by the user in equations (6) and (7).
 
-% --- NEW FUNCTION 2: Extract Sensorgrams from Video File ---
-% --- FINAL ROBUST VERSION ---
-function extracted_sensorgrams = extract_sensorgrams_from_video(filename)
-% Extracts line-average sensorgrams from a video file.
-% It now ONLY returns the signals, as we will use the original time vector.
+    % --- Define terms based on your formula's notation ---
+    % Epsilon_2r: Real part of the metal's dielectric constant (layer 2 in a 3-layer model)
+    epsilon_2r = real(n_metal_complex^2);
+    
+    % N3: Refractive index of the analyte layer
+    N3_sq = n_analyte^2;
+    
+    % N4: Refractive index of the bulk/environmental medium
+    N4 = n_bulk;
+    N4_sq = N4^2;
 
-    fprintf('Extracting line-average sensorgrams from video file...\n');
+    % d3: Thickness of the layer causing the change.
+    % Based on the physics, we will interpret this as the analyte layer thickness, d2.
+    d3 = d_analyte;
+
+    % --- Calculate Equation (6) ---
+    term1 = (2 * pi * d3) / lambda;
     
-    video_obj = VideoReader(filename);
+    % Note: (-epsilon_2r * N4^2) will be positive since epsilon_2r for gold is negative.
+    term2_numerator = (-epsilon_2r * N4_sq)^(3/2);
+    term2_denominator = (epsilon_2r - N4_sq)^2;
+    term2 = term2_numerator / term2_denominator;
+
+    term3_numerator = N3_sq - N4_sq;
+    term3_denominator = N3_sq; % As per your formula
+    term3 = term3_numerator / term3_denominator;
+
+    N_s_eff = term1 * term2 * term3 + N4_sq;
     
-    num_frames = video_obj.NumFrames;
-    num_lines = video_obj.Height;
-    extracted_sensorgrams = zeros(num_frames, num_lines);
-    
-    for k = 1:num_frames
-        frame_rgb = read(video_obj, k);
-        frame_gray = rgb2gray(frame_rgb);
-        line_averages = mean(frame_gray, 2);
-        extracted_sensorgrams(k, :) = line_averages';
-    end
-    
-    fprintf('Sensorgram extraction complete.\n');
+    % --- Calculate Equation (7) ---
+    delta_neff = N_s_eff - N4;
 end
