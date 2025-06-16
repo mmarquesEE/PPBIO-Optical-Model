@@ -17,7 +17,7 @@ dx = grid_size_x / gridN_x; % Size of one grid cell in x-direction (mm)
 dz = grid_size_z / gridN_z; % Size of one grid cell in z-direction (mm)
 % Example pulse parameters
 n_exp = 1;T1 = 2200; T2 = 2*T1; T3 = 3*T1;t_total = 4*T1;
-c_diss = 0;c1 = 330e-4;c2 = 500e-4;
+c_diss = 0;c1 = 830e-4;c2 = 500e-4;
 exp_settings = generate_experiments(n_exp, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2);
 model_config.gridN_x = gridN_x;
 model_config.gridN_y = gridN_y;
@@ -34,51 +34,66 @@ model_config.ru_to_m = ru_to_m;
 %=========================================================================
 %% --- STEP 0.2: Visualizing the surfaces ---
 % ========================================================================
-fprintf('\nVisualizing the surfaces...\n');
+fprintf('\nVisualizing the surfaces as 2D heatmaps...\n');
 
-% Crie uma grade de coordenadas X e Y para o plot 3D
-[X, Y] = meshgrid(1:gridN_y, 1:gridN_x);
-
-% Extraia a camada 2D de cada parâmetro que contém os valores de adsorção
+% Extract the 2D slice of each parameter for the entire grid
 kon_slice = squeeze(kon_grid_heterog(:, :, ads_layer));
 koff_slice = squeeze(koff_grid_heterog(:, :, ads_layer));
 smax_slice = squeeze(smax_grid_heterog(:, :, ads_layer));
 
-% Crie a figura e os subplots
-figure('Name', 'Surface Parameters', 'Position', [100, 100, 1600, 500]);
+% Create the figure and subplots
+fig1 = figure('Name', 'Surface Parameter Heatmaps', 'Position', [100, 100, 1600, 450]);
 
-% --- Gráfico de Superfície para k_on ---
+% --- Define the rectangle's position and size from your range variables ---
+% Position format: [x_start, y_start, width, height]
+% We subtract 0.5 to center the rectangle around the pixels.
+rect_pos = [ads_x_range(1)-0.5, ads_y_range(1)-0.5, ...
+            ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1];
+            
+% --- Define the explicit axes for the plot ---
+x_axis_coords = 1:gridN_x;
+y_axis_coords = 1:gridN_y;
+
+% --- 2D Plot for k_on ---
 subplot(1, 3, 1);
-surf(X, Y, kon_slice);
-title('Surface for k_{on}');
-xlabel('Line Position (y)');
-ylabel('Line Position (x)');
-zlabel('k_{on}');
+imagesc(x_axis_coords, y_axis_coords, kon_slice'); % Use imagesc and transpose (') for intuitive orientation
+axis xy; % Place the y-axis origin at the bottom-left
+hold on; % Prepare to draw on top of the image
+rectangle('Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', 2, 'LineStyle', '--');
+hold off;
+title('k_{on} Surface');
+xlabel('Position along Flow (x)');
+ylabel('Line Index (y)');
 colorbar;
-view(30, 45); % Ajusta o ângulo da câmera para melhor visualização
 
-% --- Gráfico de Superfície para k_off ---
+% --- 2D Plot for k_off ---
 subplot(1, 3, 2);
-surf(X, Y, koff_slice);
-title('Surface for k_{off}');
-xlabel('Line Position (y)');
-ylabel('Line Position (x)');
-zlabel('k_{off}');
+imagesc(x_axis_coords, y_axis_coords, koff_slice');
+axis xy;
+hold on;
+rectangle('Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', 2, 'LineStyle', '--');
+hold off;
+title('k_{off} Surface');
+xlabel('Position along Flow (x)');
+ylabel('Line Index (y)');
 colorbar;
-view(30, 45);
 
-% --- Gráfico de Superfície para s_max ---
+% --- 2D Plot for s_max ---
 subplot(1, 3, 3);
-surf(X, Y, smax_slice);
-title('Surface for s_{max}');
-xlabel('Line Position (y)');
-ylabel('Line Position (x)');
-zlabel('s_{max}');
+imagesc(x_axis_coords, y_axis_coords, smax_slice');
+axis xy;
+hold on;
+rectangle('Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', 2, 'LineStyle', '--');
+hold off;
+title('s_{max} Surface');
+xlabel('Position along Flow (x)');
+ylabel('Line Index (y)');
 colorbar;
-view(30, 45);
 
-sgtitle('Visualização 3D da Heterogeneidade dos Parâmetros na Superfície', 'FontSize', 16, 'FontWeight', 'bold');
+%sgtitle('2D Visualization of Surface Parameter Heterogeneity', 'FontSize', 16, 'FontWeight', 'bold');
 
+% --- SAVE FIGURE ---
+print(fig1, 'Adsorption/LineAverageModel/Figures/figure_1_surf_params_2D.png', '-dpng', '-r300');
 % =========================================================================
 %% --- STEP 1: GENERATE "EXPERIMENTAL" DATA ---
 % By creating this data upfront, we know the exact size of all outputs
@@ -101,28 +116,38 @@ for exp_idx = 1:n_exp
     
     s_obs_by_line_clean = compute_s_obs_by_line(s_heterog_exp, ads_x_range, ads_y_range, ads_layer);
     
-    noise_level = 0.01;
-    noise_matrix = 1 + noise_level * randn(size(s_obs_by_line_clean));
+    noise_level = 0.01; % 1% de ruído, como antes
+        
+    % 1. Calcule a resposta máxima no sinal limpo para definir a escala do ruído
+    max_response = max(s_obs_by_line_clean(:));
     
+    % 2. Defina o desvio padrão do ruído como 1% da resposta máxima
+    noise_std_dev = noise_level * max_response;
+    
+    % 3. Gere o ruído aditivo com desvio padrão constante
+    additive_noise = noise_std_dev * randn(size(s_obs_by_line_clean));
+    
+    % 4. Adicione o ruído ao sinal limpo
+    s_obs_by_line_noisy = s_obs_by_line_clean + additive_noise;
+    
+    % Armazena os dados na struct
     data_struct.time = t_exp;
-    data_struct.signals_clean = s_obs_by_line_clean; % Store the clean version
-    data_struct.signals = s_obs_by_line_clean .* noise_matrix; % And the noisy version
+    data_struct.signals_clean = s_obs_by_line_clean;
+    data_struct.signals = s_obs_by_line_noisy; % Usa a nova versão com ruído aditivo
     exp_data{exp_idx} = data_struct;
     %Plotting
     t_plot = exp_data{exp_idx}.time;
     s_plot_by_line = exp_data{exp_idx}.signals_clean; % Plot the clean data
     s_plot_global = sum(s_plot_by_line, 2);
     
-    figure('Position', [100, 100, 1200, 600]);
-    subplot(1,2,1);
-    plot(t_plot, s_plot_global, 'r-', 'LineWidth', 2);
-    title('Global (Summed) Sensorgram'); xlabel('Time (s)'); ylabel('Total s_{obs}(t)'); grid on;
+    fig2 = figure('Position', [100, 100, 1200, 600]);
+    subplot(1,2,1); plot(t_exp, sum(s_obs_by_line_clean, 2), 'r-', 'LineWidth', 2); title('Global (Summed) Sensorgram'); xlabel('Time (s)'); ylabel('Total s_{obs}(t)'); grid on;
+    subplot(1,2,2); plot(t_exp, s_obs_by_line_clean, 'LineWidth', 1.5); title('Line-by-Line Sensorgrams (1D Heterogeneity)'); xlabel('Time (s)'); ylabel('s_{obs, j}(t)'); legend(arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false)); grid on;
+    sgtitle(sprintf('Experiment %d: Ground Truth Data (RU)', exp_idx));
     
-    subplot(1,2,2);
-    plot(t_plot, s_plot_by_line, 'LineWidth', 1.5);
-    title('Line-by-Line Sensorgrams (1D Heterogeneity)'); xlabel('Time (s)'); ylabel('s_{obs, j}(t)');
-    legend(arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false), 'Location', 'best'); grid on;
-    sgtitle(sprintf('Experiment %d: Ground Truth Data', exp_idx));
+    % --- SAVE FIGURE ---
+    %print(fig2, sprintf('figure_2_ru_sensorgrams_exp%d', exp_idx), '-dpng', '-r300');
+
     % 1. Calculate total rows by summing up data points from all experiments
     total_rows = total_rows + numel(exp_data{exp_idx}.signals_clean);
 end
@@ -207,8 +232,7 @@ fprintf('Now performing SVD analysis to investigate practical identifiability...
 singular_values = diag(S);
 
 % --- Step 2: Analyze and Plot Singular Values ---
-figure('Name', 'SVD Analysis of Jacobian', 'Position', [100, 100, 1400, 600]);
-
+svg_fig = figure('Name', 'SVD Analysis of Jacobian', 'Position', [100, 100, 1400, 600]);
 subplot(1, 2, 1);
 semilogy(singular_values, 'o-', 'LineWidth', 2, 'MarkerSize', 8);
 grid on;
@@ -235,8 +259,8 @@ param_labels = [arrayfun(@(i) sprintf('kon_{%d}', i), 1:ads_y_dim, 'UniformOutpu
 yticks(1:N_params_1D);
 yticklabels(param_labels);
 
-sgtitle('SVD-based Identifiability Analysis', 'FontSize', 16, 'FontWeight', 'bold');
-
+%sgtitle('SVD-based Identifiability Analysis', 'FontSize', 16, 'FontWeight', 'bold');
+print(svg_fig, sprintf('Adsorption/LineAverageModel/Figures/figure_svd_analysis'), '-dpng', '-r300')
 % ================= END OF SVD ANALYSIS =================
 
 %% --- STEP 3: PARAMETER IDENTIFICATION (1D HETEROGENEITY) ---   
@@ -276,13 +300,12 @@ p0 = min(ub, p0);     % Enforce upper bound
 % --- NEW --- Create a handle to the plotter function with all necessary data
 optim_plot_fun = @(log_p, optim_v, state) optimPlotter_1D(...
     log_p, optim_v, state, ...
-    p_true_1D, exp_data, exp_settings, model_config, ads_y_dim);
-
+    p_true_1D, exp_data, ads_y_dim);
 % --- MODIFIED --- Add the 'OutputFcn' to your optimization options
 optim_opts = optimoptions('lsqnonlin', ...
     'Algorithm', 'trust-region-reflective', ...
     'Display', 'iter', ...
-    'MaxIterations', 50, ...
+    'MaxIterations', 10, ...
     'UseParallel', true, ...
     'FunctionTolerance', 1e-10, ...
     'StepTolerance', 1e-10, ...
@@ -316,7 +339,7 @@ n1 = sqrt(-14.379 + 1.0084j); % Gold film (complex RI)
 n_bulk = sqrt(1.7876);         % Flow cell solution (baseline buffer)
 
 % Define the angular range for SPR curve calculation
-angle_range = linspace(65, 80, 500); % [start_angle, end_angle, num_points]
+angle_range = linspace(65, 80, 1000); % [start_angle, end_angle, num_points]
 
 % Define the conversion factor from Response Units (RU) to Refractive Index Units (RIU)
 % 1000 RU = 0.001 RIU change
@@ -383,7 +406,151 @@ for t_idx = 1:size(s_obs_ru, 1)
     end
 end
 toc;
-% =========================================================================
+fprintf('Generating example SPR curve plot with annotations...\n');
+    
+% --- Calculations (from your existing code) ---
+line_to_plot = round(ads_y_dim/2);
+[~, t_idx_max_response] = max(s_obs_ru(:, line_to_plot));
+n2_baseline = n_bulk;
+[Rp_baseline, theta_res_baseline] = fresnel_spr_curve(angle_range, n0, n1, n2_baseline, n_bulk, d1, d2, wavelength);
+ru_max = s_obs_ru(t_idx_max_response, line_to_plot);
+n2_analyte_max = n_bulk + (ru_max * RU_TO_RIU);
+[Rp_analyte, theta_res_analyte] = fresnel_spr_curve(angle_range, n0, n1, n2_analyte_max, n_bulk, d1, d2, wavelength);
+
+% --- NEW: Calculate the shift values to be displayed ---
+angle_shift = theta_res_analyte - theta_res_baseline;
+ri_change = n2_analyte_max - n2_baseline;
+
+% --- Create the Enhanced Plot ---
+fig3 = figure('Name', 'Example SPR Curve Shift');
+hold on; % Use hold on from the start
+
+% Plot the two curves with more descriptive legend entries
+plot(angle_range, Rp_baseline, 'b-', 'LineWidth', 2, 'DisplayName', sprintf('Baseline (n_2 = %.4f)', n2_baseline));
+plot(angle_range, Rp_analyte, 'r-', 'LineWidth', 2, 'DisplayName', sprintf('Max Response (n_2 = %.4f)', n2_analyte_max));
+
+% Mark the resonance angles with vertical lines
+xline(theta_res_baseline, 'b--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+xline(theta_res_analyte, 'r--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+
+hold off;
+grid on;
+xlabel('Incident Angle (degrees)');
+ylabel('Reflectivity');
+title(sprintf('SPR Curve Shift for Line %d', line_to_plot));
+ylim([0, 1]);
+
+% --- NEW: Add a text box with the calculated shift information ---
+text_str = sprintf('Resonance Angle Shift:\n\\Delta\\theta_{SPR} = %.3f°', angle_shift);
+
+% Place text in the upper right corner of the plot
+xlims = xlim;
+ylims = ylim;
+text(xlims(2) - 0.05*diff(xlims), ylims(2) - 0.1*diff(ylims), text_str, ...
+    'FontSize', 10, ...
+    'EdgeColor', 'black', ...
+    'BackgroundColor', [1 1 0.9], ... % Light yellow background
+    'HorizontalAlignment', 'right', ...
+    'VerticalAlignment', 'top');
+
+% Create a single, clean legend
+legend('show', 'Location', 'best');
+
+% --- SAVE FIGURE ---
+% Note: Make sure the subfolders exist or save to the main directory.
+print(fig3, 'Adsorption/LineAverageModel/Figures/figure_spr_shift.png', '-dpng', '-r300');% =========================================================================
+
+fprintf('Generating advanced SPR curve and image visualization...\n');
+    
+% --- Calculations (from your existing code) ---
+line_to_plot = round(ads_y_dim/2);
+[~, t_idx_max_response] = max(s_obs_ru(:, line_to_plot));
+n2_baseline = n_bulk;
+[Rp_baseline, theta_res_baseline] = fresnel_spr_curve(angle_range, n0, n1, n2_baseline, n_bulk, d1, d2, wavelength);
+ru_max = s_obs_ru(t_idx_max_response, line_to_plot);
+n2_analyte_max = n_bulk + (ru_max * RU_TO_RIU);
+[Rp_analyte, theta_res_analyte] = fresnel_spr_curve(angle_range, n0, n1, n2_analyte_max, n_bulk, d1, d2, wavelength);
+
+% Calculate the shift values for annotation
+angle_shift = theta_res_analyte - theta_res_baseline;
+ri_change = n2_analyte_max - n2_baseline;
+
+% --- Create the Figure and Manually Position Axes ---
+fig3 = figure('Name', 'SPR Curve Shift with Image Visualization', 'Position', [100, 100, 800, 800]);
+
+% Define positions for the plots: [left, bottom, width, height]
+pos_main_plot = [0.13, 0.35, 0.77, 0.55]; % Large plot on top
+pos_img1 = [0.13, 0.20, 0.77, 0.05];      % Thin image strip below
+pos_img2 = [0.13, 0.10, 0.77, 0.05];      % Second thin image strip
+
+% Create the axes objects
+ax_main = axes('Position', pos_main_plot);
+ax_img_baseline = axes('Position', pos_img1);
+ax_img_analyte = axes('Position', pos_img2);
+
+% --- Plot 1: The Main SPR Curves (on the top axes) ---
+plot(ax_main, angle_range, Rp_baseline, 'b-', 'LineWidth', 2, 'DisplayName', sprintf('Baseline (n_2 = %.4f)', n2_baseline));
+hold(ax_main, 'on');
+plot(ax_main, angle_range, Rp_analyte, 'r-', 'LineWidth', 2, 'DisplayName', sprintf('Max Response (n_2 = %.4f)', n2_analyte_max));
+xline(ax_main, theta_res_baseline, 'b--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+xline(ax_main, theta_res_analyte, 'r--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+hold(ax_main, 'off');
+grid(ax_main, 'on');
+ylabel(ax_main, 'Reflectivity');
+title(ax_main, sprintf('SPR Curve Shift for Line %d', line_to_plot));
+legend(ax_main, 'Location', 'northeast');
+ylim(ax_main, [0, 1]);
+set(ax_main, 'XTickLabel', []); % Remove x-axis labels to avoid overlap
+
+% --- Plot 2: The "SPR Image" for the Baseline Curve ---
+imagesc(ax_img_baseline, angle_range, 1, Rp_baseline);
+colormap(ax_img_baseline, 'gray');
+caxis(ax_img_baseline, [0,1]);
+set(ax_img_baseline, 'YTick', []); % Remove y-axis ticks
+set(ax_img_baseline, 'XTickLabel', []); % Remove x-axis labels
+
+% --- Plot 3: The "SPR Image" for the Max Response Curve ---
+imagesc(ax_img_analyte, angle_range, 1, Rp_analyte);
+colormap(ax_img_analyte, 'gray');
+caxis(ax_img_analyte, [0,1]);
+set(ax_img_analyte, 'YTick', []);
+xlabel(ax_img_analyte, 'Incident Angle (degrees)'); % Only show x-label on the bottom plot
+
+% --- Link all X-Axes together ---
+linkaxes([ax_main, ax_img_baseline, ax_img_analyte], 'x');
+xlim(ax_main, [angle_range(1), angle_range(end)]); % Set initial limits
+
+% --- Add Annotations for the Shift Arrow and Text ---
+
+% Get position of the main plot to convert data coordinates to figure coordinates
+ax_pos = get(ax_main, 'Position');
+xlims = get(ax_main, 'XLim');
+ylims = get(ax_main, 'YLim');
+
+% Arrow coordinates in data space
+y_arrow = 0.5; % Y position for the arrow
+p1_data = [theta_res_baseline, y_arrow];
+p2_data = [theta_res_analyte, y_arrow];
+
+% Convert to normalized figure units for the annotation
+x_arrow_norm = ( [p1_data(1), p2_data(1)] - xlims(1) ) / diff(xlims);
+y_arrow_norm = ( [p1_data(2), p2_data(2)] - ylims(1) ) / diff(ylims);
+
+x_arrow_fig = ax_pos(1) + x_arrow_norm * ax_pos(3);
+y_arrow_fig = ax_pos(2) + y_arrow_norm * ax_pos(4);
+
+% Draw the double-headed arrow
+annotation('doublearrow', x_arrow_fig, y_arrow_fig, 'LineWidth', 2, 'Color', 'k', 'HeadStyle', 'vback2', 'HeadSize', 10);
+
+% Add text annotation with shift information
+text_str = sprintf('\Delta\\theta_{SPR} = %.3f\\circ', angle_shift);
+text(ax_main, xlims(1) + 0.05*diff(xlims), ylims(2) - 0.1*diff(ylims), text_str, ...
+    'FontSize', 12, 'EdgeColor', 'black', 'BackgroundColor', 'white');
+
+% --- SAVE FIGURE ---
+print(fig3, 'Adsorption/LineAverageModel/Figures/figure_spr_shift_composite.png', '-dpng', '-r300');
+
+
 %% --- STEP 5: VIDEO CREATION ---
 % =========================================================================
 if generate_video_frames
@@ -391,7 +558,7 @@ if generate_video_frames
     tic;
 
     % --- THE FIX IS HERE (Part 1): Change the video profile and filename ---
-    video_filename = 'spri_simulation_final.avi';
+    video_filename = 'Adsorption/LineAverageModel/Videos/spri_simulation_final.avi';
     outputVideo = VideoWriter(video_filename, 'Motion JPEG AVI');
     
     outputVideo.FrameRate = 30;
@@ -443,29 +610,31 @@ ylabel('Refletividade');
 legend('Location', 'best');
 ylim([0, 1]);
 %% 
-figure('Name', 'Proper Sensorgram: Resonance Angle vs. Time', 'Position', [300, 300, 1400, 700]);
+fig3b = figure('Name', 'Proper Sensorgram: Resonance Angle vs. Time', 'Position', [300, 300, 1400, 700]);
 lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
 for i = 1:length(lines_to_plot)
     subplot(1, length(lines_to_plot), i);
     line_idx = lines_to_plot(i);
     
-    % --- This is the proper, physically-correct sensorgram ---
+    % This is the proper, physically-correct sensorgram
     plot(t_exp, theta_spr_vs_time(:, line_idx), 'r-', 'LineWidth', 2, 'DisplayName', 'Sensorgram (Resonance Angle)');
     
     grid on;
     xlabel('Time (s)');
     ylabel('Resonance Angle (degrees)');
-    title(sprintf('Proper Sensorgram for Line %d', line_idx));
+    title(sprintf('Sensorgram for Line %d', line_idx));
     
-    % --- For validation, plot the original RU data on a separate y-axis ---
-    yyaxis right % Activate the right y-axis
+    % For validation, plot the original RU data on a separate y-axis
+    yyaxis right
     plot(t_exp, s_obs_ru(:, line_idx), 'b--', 'LineWidth', 1.5, 'DisplayName', 'Original Simulation (RU)');
     ylabel('Response Units (RU)');
     
     legend('Location', 'best');
     xlim([0, t_exp(end)]);
 end
-sgtitle('Final Validation: The Physically Correct Sensorgram (Angle vs. Time)', 'FontSize', 16);
+%sgtitle('Final Validation: The Physically Correct Sensorgram (Angle vs. Time)', 'FontSize', 16);
+% --- SAVE FIGURE ---
+print(fig3b, 'Adsorption/LineAverageModel/Figures/figure_angle_vs_ru.png', '-dpng', '-r300');
 %% 
 global_sensorgram = sum(formula_response_vs_time, 2);
 
@@ -531,100 +700,89 @@ sgtitle('Final Sensorgrams Plotted as Absolute N_s^{eff}', 'FontSize', 16, 'Font
 %% --- STEP 7: INVERSE PROCESS ---
 % =========================================================================
 
-% --- Step 1: Analisa os frames salvos para reconstruir o sensorgram ---
-% Esta função executa o processo inverso que você descreveu
+% --- Step 7.1: Analyze saved frames to reconstruct the sensorgram ---
 theta_extracted_from_frames = analyze_spr_frames_to_get_sensorgram(video_frames_folder, angle_range);
-% --- Step 2: Converte os Ângulos Extraídos de volta para Índice de Refração ---
-fprintf('Convertendo ângulos extraídos de volta para Índice de Refração via interpolação...\n');
 
+% --- Step 7.2: Convert extracted angles back to Refractive Index ---
+fprintf('Converting extracted angles back to Refractive Index via interpolation...\n');
 n2_reconstructed_vs_time = zeros(size(theta_extracted_from_frames));
-
-% Para cada linha, use a relação (n2 vs theta) que calculamos como uma tabela de consulta
 parfor j_idx = 1:ads_y_dim
-    % Os dados conhecidos da nossa simulação "forward"
-    known_n2s = n2_vs_time(:, j_idx);
-    known_thetas = theta_spr_vs_time(:, j_idx);
-    
-    % Os ângulos que queremos converter de volta para n2
-    angles_to_convert = theta_extracted_from_frames(:, j_idx);
-
-    % A relação theta vs n2 é monotônica, mas para robustez, removemos pontos duplicados
-    [unique_thetas, unique_indices] = unique(known_thetas);
-    unique_n2s = known_n2s(unique_indices);
-
-    % Use interp1 para fazer a "inversão" da função
-    n2_reconstructed_vs_time(:, j_idx) = interp1(unique_thetas, unique_n2s, angles_to_convert, 'linear', 'extrap');
+    [unique_thetas, unique_indices] = unique(theta_spr_vs_time(:, j_idx));
+    unique_n2s = n2_vs_time(unique_indices, j_idx);
+    n2_reconstructed_vs_time(:, j_idx) = interp1(unique_thetas, unique_n2s, theta_extracted_from_frames(:, j_idx), 'linear', 'extrap');
 end
-% --- Step 3: Crie o gráfico de comparação final ---
-% Este é o teste definitivo: os dados originais vs. os dados re-extraídos.
-% Ambos estão em unidades de "graus", então a comparação é direta.
 
-figure('Name', 'Validação Final: Sensorgram Original vs. Extraído dos Frames', 'Position', [300, 300, 1400, 700]);
+% --- Step 7.3: Convert reconstructed RI back to RU ---
+ru_reconstructed = (n2_reconstructed_vs_time - n_bulk) / RU_TO_RIU;
+
+% =====================================================================
+% --- FINAL VALIDATION PLOTS WITH QUANTITATIVE ERROR IN LEGENDS ---
+% =====================================================================
 
 lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
 
+% --- Plot A: Validation in Resonance Angle units ---
+fig4a = figure('Name', 'Final Validation: Original vs. Extracted Angle', 'Position', [300, 300, 1800, 500]);
 for i = 1:length(lines_to_plot)
     subplot(1, length(lines_to_plot), i);
     line_idx = lines_to_plot(i);
     original_angle = theta_spr_vs_time(:, line_idx);
     extracted_angle = theta_extracted_from_frames(:, line_idx);
-    % Plota os ângulos de ressonância calculados DIRETAMENTE da física
-    plot(t_exp, original_angle - original_angle(1), 'b-', 'LineWidth', 4, 'DisplayName', 'Original (Cálculo Direto)');
-    hold on;
-    plot(t_exp, extracted_angle - extracted_angle(1), 'r--', 'LineWidth', 2, 'DisplayName', 'Extraído das Imagens');
     
-    grid on;
-    xlabel('Time (s)');
-    ylabel('Resonance Angle (degrees)');
-    title(sprintf('Validação Final para a Linha %d', line_idx));
-    legend('Location', 'best');
-    xlim([0, t_exp(end)]);
-end
-figure('Name', 'Validação Final: RI Original vs. RI Reconstruído', 'Position', [300, 300, 1400, 700]);
+    [offset, error_abs] = calculate_validation_error(original_angle, extracted_angle);
+    extracted_legend_text = sprintf('Extracted (Offset=%.1e, Error=%.1e)', offset, error_abs);
 
+    plot(t_exp, original_angle - original_angle(1), 'b-', 'LineWidth', 4, 'DisplayName', 'Original');
+    hold on;
+    plot(t_exp, extracted_angle - extracted_angle(1), 'r--', 'LineWidth', 2, 'DisplayName', extracted_legend_text);
+    
+    grid on; xlabel('Time (s)'); ylabel('Change in Resonance Angle (degrees)');
+    title(sprintf('Angle Validation for Line %d', line_idx));
+    legend('Location', 'best'); xlim([0, t_exp(end)]);
+end
+%sgtitle('Final Validation in Angle Space', 'FontSize', 16);
+print(fig4a, 'Adsorption/LineAverageModel/Figures/figure_4a_validation_angle.png', '-dpng', '-r300');
+
+% --- Plot B: Validation in Refractive Index units ---
+fig4b = figure('Name', 'Final Validation: Original vs. Reconstructed RI', 'Position', [300, 300, 1800, 500]);
 for i = 1:length(lines_to_plot)
-        subplot(1, length(lines_to_plot), i);
-        line_idx = lines_to_plot(i);
-        
-        original_ri = n2_vs_time(:, line_idx);
-        reconstructed_ri = n2_reconstructed_vs_time(:, line_idx);
-        
-        % --- A CORREÇÃO ESTÁ AQUI: Subtrai o primeiro ponto de cada curva ---
-        plot(t_exp, original_ri - original_ri(1), 'b-', 'LineWidth', 4, 'DisplayName', 'RI Original (da Simulação)');
-        hold on;
-        plot(t_exp, reconstructed_ri - reconstructed_ri(1), 'r--', 'LineWidth', 2, 'DisplayName', 'RI Reconstruído (das Imagens)');
-        
-        grid on;
-        xlabel('Time (s)');
-        ylabel('Refractive Index (RIU)');
-        title(sprintf('Validação de RI para a Linha %d', line_idx));
-        legend('Location', 'best');
-        xlim([0, t_exp(end)]);
+    subplot(1, length(lines_to_plot), i);
+    line_idx = lines_to_plot(i);
+    original_ri = n2_vs_time(:, line_idx);
+    reconstructed_ri = n2_reconstructed_vs_time(:, line_idx);
+    
+    [offset, error_abs] = calculate_validation_error(original_ri, reconstructed_ri);
+    extracted_legend_text = sprintf('Reconstructed (Offset=%.1e, Error=%.1e)', offset, error_abs);
+
+    plot(t_exp, original_ri - original_ri(1), 'b-', 'LineWidth', 4, 'DisplayName', 'Original');
+    hold on;
+    plot(t_exp, reconstructed_ri - reconstructed_ri(1), 'r--', 'LineWidth', 2, 'DisplayName', extracted_legend_text);
+    
+    grid on; xlabel('Time (s)'); ylabel('Change in Refractive Index (dRIU)');
+    title(sprintf('RI Validation for Line %d', line_idx));
+    legend('Location', 'best'); xlim([0, t_exp(end)]);
 end
-sgtitle('Validação Completa do Modelo e do Processo de Análise', 'FontSize', 16);
+%sgtitle('Final Validation in Refractive Index Space', 'FontSize', 16);
+print(fig4b, 'Adsorption/LineAverageModel/Figures/figure_4b_validation_ri.png', '-dpng', '-r300');
 
-ru_reconstructed = (n2_reconstructed_vs_time - n_bulk) / RU_TO_RIU;
-        
-% --- Step 3: Crie o Gráfico de Comparação Final em Unidades de RU ---
-figure('Name', 'Validação Final Round-Trip: RU Original vs. RU Reconstruído', 'Position', [300, 300, 1400, 700]);
-
-lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
-
+% --- Plot C: Validation in Response Units ---
+fig4c = figure('Name', 'Final Round-Trip Validation: RU Original vs. Reconstructed', 'Position', [300, 300, 1800, 500]);
 for i = 1:length(lines_to_plot)
     subplot(1, length(lines_to_plot), i);
     line_idx = lines_to_plot(i);
     original_ru = s_obs_ru(:, line_idx);
-    reconstructed_ru = ru_reconstructed(:, line_idx);
-    % --- A CORREÇÃO ESTÁ AQUI: Subtrai o primeiro ponto de cada curva ---
-    plot(t_exp, original_ru - original_ru(1), 'b-', 'LineWidth', 4, 'DisplayName', 'Original Simulation (RU)');
-    hold on;
-    plot(t_exp, reconstructed_ru - reconstructed_ru(1), 'r--', 'LineWidth', 2, 'DisplayName', 'Reconstruído das Imagens (RU)');
+    reconstructed_ru_line = ru_reconstructed(:, line_idx);
     
-    grid on;
-    xlabel('Time (s)');
-    ylabel('Response Units (RU)');
-    title(sprintf('Validação de RU para a Linha %d', line_idx));
-    legend('Location', 'best');
-    xlim([0, t_exp(end)]);
+    [offset, error_abs] = calculate_validation_error(original_ru, reconstructed_ru_line);
+    extracted_legend_text = sprintf('Reconstructed (Offset=%.1e, Error=%.1e)', offset, error_abs);
+
+    plot(t_exp, original_ru - original_ru(1), 'b-', 'LineWidth', 4, 'DisplayName', 'Original');
+    hold on;
+    plot(t_exp, reconstructed_ru_line - reconstructed_ru_line(1), 'r--', 'LineWidth', 2, 'DisplayName', extracted_legend_text);
+    
+    grid on; xlabel('Time (s)'); ylabel('Response Units (RU)');
+    title(sprintf('RU Validation for Line %d', line_idx));
+    legend('Location', 'best'); xlim([0, t_exp(end)]);
 end
-sgtitle('Validação Final Round-Trip: As Curvas Devem Quase Sobrepor-se', 'FontSize', 16);
+%sgtitle('Final Round-Trip Validation in Response Units', 'FontSize', 16);
+print(fig4c, 'Adsorption/LineAverageModel/Figures/figure_4c_validation_ru.png', '-dpng', '-r300');

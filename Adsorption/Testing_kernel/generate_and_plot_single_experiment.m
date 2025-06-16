@@ -8,9 +8,8 @@ function generate_and_plot_single_experiment()
     % 1. SETUP SIMULATION PARAMETERS
     % =====================================================================
     % Shared parameters
-    gridN_x = 10; gridN_y = 5; gridN_z = 3;
-    ads_layer = 1;
-    ads_x_range = [5,5]; ads_y_range = [2,3];
+    gridN_x = 22; gridN_y = 5; gridN_z = 3;ads_layer = 1;
+    ads_x_range = [5,15]; ads_y_range = [1,5];
 
     % Fixed physical parameters for Advin
     D_coeff = 6e-3;
@@ -191,80 +190,4 @@ function [kon_grid, koff_grid, smax_grid] = create_ground_truth_heterogeneity(nx
     kon_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = kon_vals;
     koff_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = koff_vals;
     smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = smax_vals;
-end
-
-function [t, c_s, s] = simulate_3d_flow_model_with_pulses(...
-    nx, ny, nz, kon_grid, koff_grid, smax_grid, velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid)
-
-    num_cells = nx * ny * nz;
-    c_s0 = zeros(nx, ny, nz);
-    c_s0(1, :, :) = concentrations(1);
-    y0 = [c_s0(:); s0_grid(:)];
-
-    options = odeset('RelTol', 1e-5, 'AbsTol', 1e-7);
-    t_all = [];
-    y_all = [];
-
-    num_segments = length(t_breaks) - 1;
-    for seg = 1:num_segments
-        t_start = t_breaks(seg);
-        t_end = t_breaks(seg+1);
-        c0_seg = concentrations(seg);
-
-        num_points = 400; % Reduced points for speed in this simple script
-        tspan = linspace(t_start, t_end, num_points);
-        [t_seg, y_seg] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, ...
-            kon_grid, koff_grid, smax_grid, c0_seg, D_coeff, ru_to_m), tspan, y0, options);
-
-        if seg == 1
-            t_all = t_seg;
-            y_all = y_seg;
-        else
-            t_all = [t_all; t_seg(2:end)];
-            y_all = [y_all; y_seg(2:end, :)];
-        end
-
-        if seg < num_segments
-            y0 = y_seg(end, :)';
-            c_s_end = reshape(y0(1:num_cells), [nx, ny, nz]);
-            c_s_end(1, :, :) = concentrations(seg+1);
-            y0 = [c_s_end(:); y0(num_cells+1:end)];
-        end
-    end
-
-    c_s = reshape(y_all(:, 1:num_cells), [length(t_all), nx, ny, nz]);
-    s = reshape(y_all(:, num_cells+1:2*num_cells), [length(t_all), nx, ny, nz]);
-    t = t_all;
-end
-
-function dydt = ode_system(t, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m)
-    num_cells = nx * ny * nz;
-    c_s = reshape(y(1:num_cells), [nx, ny, nz]);
-    s = reshape(y(num_cells + 1:end), [nx, ny, nz]);
-    
-    dcsdt = zeros(nx, ny, nz);
-
-    % Diffusion terms
-    d2c_dx2 = zeros(nx, ny, nz);
-    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:));
-    d2c_dz2 = zeros(nx, ny, nz);
-    d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
-    d2c_dz2(:,:,1) = c_s(:,:,2) - c_s(:,:,1);
-    d2c_dz2(:,:,end) = c_s(:,:,end-1) - c_s(:,:,end);
-    dcsdt = D_coeff * (d2c_dx2 + d2c_dz2);
-    
-    % Advection
-    dcdx = zeros(nx,ny,nz);
-    dcdx(2:end,:,:) = c_s(2:end,:,:) - c_s(1:end-1,:,:);
-    dcsdt = dcsdt - bsxfun(@times, velocity_profile, dcdx);
-    
-    % Adsorption kinetics
-    available_sites = max(smax_grid - s, 0);
-    dsdt = kon_grid .* c_s .* available_sites - koff_grid .* s;
-    dcsdt = dcsdt - (dsdt * ru_to_m);
-    
-    % Inlet boundary condition
-    dcsdt(1,:,:) = 0;
-    
-    dydt = [dcsdt(:); dsdt(:)];
 end

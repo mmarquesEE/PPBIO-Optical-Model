@@ -40,13 +40,13 @@ function theta_from_frames = analyze_spr_frames_to_get_sensorgram(frames_folder,
         % O resto da função continua como antes
         reflectivity_matrix = double(img_gray) / 255.0;
         % --- MUDANÇA AQUI: Loop através de cada linha para aplicar a interpolação ---
-        for j = 1:num_lines
-            rp_curve = reflectivity_matrix(j, :);
-            theta_from_frames(i, j) = find_subpixel_minimum(rp_curve, angle_range);
-        end
-%         [~, min_indices] = min(reflectivity_matrix, [], 2);
-%         resonance_angles_for_frame = angle_range(min_indices);
-%         theta_from_frames(i, :) = resonance_angles_for_frame;
+%         for j = 1:num_lines
+%             rp_curve = reflectivity_matrix(j, :);
+%             theta_from_frames(i, j) = find_subpixel_minimum(rp_curve, angle_range);
+%         end
+        [~, min_indices] = min(reflectivity_matrix, [], 2);
+        resonance_angles_for_frame = angle_range(min_indices);
+        theta_from_frames(i, :) = resonance_angles_for_frame;
     end
     toc;
     fprintf('Extração do sensorgram a partir das imagens concluída.\n');
