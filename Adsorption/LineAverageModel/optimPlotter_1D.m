@@ -14,10 +14,30 @@ function stop = optimPlotter_1D(log_params, optimValues, state, true_params_1D, 
             if ishandle(handles.fig), updatePlots(log_params, optimValues, handles); else, stop = true; end
         case 'done'
             if ishandle(handles.fig)
-%                 sgtitle(handles.fig, 'Optimization Finished!', 'FontSize', 16, 'FontWeight', 'bold');
-                % --- SAVE FIGURE ---
-                print(handles.fig, 'Adsorption/LineAverageModel/Figures/figure_fit_diagnostics', '-dpng', '-r300');
-                fprintf('Diagnostic plot saved as figure_5_fit_diagnostics.png\n');
+                % --- SAVE ENTIRE FIGURE (AS BEFORE) ---
+                print(handles.fig, 'Adsorption/LineAverageModel/Figures/figure_fit_diagnostics.png', '-dpng', '-r300');
+                print(handles.fig, 'Adsorption/LineAverageModel/Figures/EPS/figure_fit_diagnostics.eps', '-depsc');
+                fprintf('Full diagnostic plot saved as figure_fit_diagnostics.png and .eps\n');
+                
+                % --- SAVE EACH SUBPLOT AS A SEPARATE EPS FILE ---
+                fprintf('Saving individual diagnostic subplots as EPS files...\n');
+                base_path = 'Adsorption/LineAverageModel/Figures/EPS/';
+                
+                save_subplot_as_eps(handles.ax_kon, [base_path, 'diag_plot_kon_recovery.eps']);
+                save_subplot_as_eps(handles.ax_koff, [base_path, 'diag_plot_koff_recovery.eps']);
+                save_subplot_as_eps(handles.ax_smax, [base_path, 'diag_plot_smax_recovery.eps']);
+                
+                save_subplot_as_eps(handles.ax_fit1, [base_path, 'diag_plot_fit_line_1.eps']);
+                save_subplot_as_eps(handles.ax_fit2, [base_path, 'diag_plot_fit_line_mid.eps']);
+                save_subplot_as_eps(handles.ax_fit3, [base_path, 'diag_plot_fit_line_end.eps']);
+                
+                save_subplot_as_eps(handles.ax_res1, [base_path, 'diag_plot_residuals_line_1.eps']);
+                save_subplot_as_eps(handles.ax_res2, [base_path, 'diag_plot_residuals_line_mid.eps']);
+                save_subplot_as_eps(handles.ax_res3, [base_path, 'diag_plot_residuals_line_end.eps']);
+                
+                save_subplot_as_eps(handles.ax_qq, [base_path, 'diag_plot_qq.eps']);
+                
+                fprintf('Finished saving all individual subplots.\n');
             end
     end
     stop = false;
