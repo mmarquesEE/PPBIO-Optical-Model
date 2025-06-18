@@ -24,7 +24,7 @@ dx = grid_size_x / gridN_x; % Size of one grid cell in x-direction (mm)
 dz = grid_size_z / gridN_z; % Size of one grid cell in z-direction (mm)
 % Example pulse parameters
 n_exp = 1;T1 = 2200; T2 = 2*T1; T3 = 3*T1;t_total = 4*T1;
-c_diss = 0;c1 = 830e-4;c2 = 500e-4;
+c_diss = 0;c1 = 3.3e-4;c2 = 0.21e-4;
 exp_settings = generate_experiments(n_exp, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2);
 model_config.gridN_x = gridN_x;
 model_config.gridN_y = gridN_y;
