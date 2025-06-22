@@ -9,7 +9,7 @@ end
 
 %% --- STEP 0.1: Parameters Definition ---
 % ========================================================================
-generate_video_frames = true; % Mude para 'false' para pular a criação do vídeo e acelerar o script
+generate_video_frames = false; % Mude para 'false' para pular a criação do vídeo e acelerar o script
 gridN_x = 22; gridN_y = 5; gridN_z = 3;ads_layer = 1;
 ads_x_range = [5,15]; ads_y_range = [1,5];
 % Get number of lines in adsorption region
@@ -42,12 +42,16 @@ model_config.ru_to_m = ru_to_m;
 %% --- STEP 0.2: Visualizing the surfaces ---
 % ========================================================================
 fprintf('\nVisualizing the surfaces as 2D heatmaps...\n');
+% --- Define common plotting properties for publication ---
+target_fig_width_cm = 8.4; % IEEE single column width
+base_font_size = 8;        % Match your paper's caption font size (e.g., 8pt)
+line_width = 1.0;          % Thinner lines for smaller figures
 % Extract the 2D slice of each parameter for the entire grid
 kon_slice = squeeze(kon_grid_heterog(:, :, ads_layer));
 koff_slice = squeeze(koff_grid_heterog(:, :, ads_layer));
 smax_slice = squeeze(smax_grid_heterog(:, :, ads_layer));
 % Create the figure and subplots
-fig1 = figure('Name', 'Surface Parameter Heatmaps', 'Position', [100, 100, 1600, 450]);
+fig1 = figure('Name', 'Surface Parameter Heatmaps', 'Units', 'centimeters');
 % --- Define the rectangle's position and size from your range variables ---
 % Position format: [x_start, y_start, width, height]
 % We subtract 0.5 to center the rectangle around the pixels.
@@ -58,55 +62,61 @@ rect_pos = [ads_x_range(1)-0.5, ads_y_range(1)-0.5, ...
 x_axis_coords = 1:gridN_x;
 y_axis_coords = 1:gridN_y;
 
+% --- Create a tiled layout with minimal spacing ---
+% Use 'compact' or 'tight' to remove unnecessary padding and space between tiles.
+t = tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
+
 % --- 2D Plot for k_on ---
-ax1 = subplot(1, 3, 1);
-imagesc(x_axis_coords, y_axis_coords, kon_slice'); % Use imagesc and transpose (') for intuitive orientation
-axis xy; % Place the y-axis origin at the bottom-left
-hold on; % Prepare to draw on top of the image
-rectangle('Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', 2, 'LineStyle', '--');
-hold off;
-title('k_{on} Surface');
-xlabel('Position along Flow (x)');
-ylabel('Line Index (y)');
-colorbar;
+ax1 = nexttile;
+imagesc(ax1, x_axis_coords, y_axis_coords, kon_slice');
+axis(ax1, 'xy'); 
+hold(ax1, 'on');
+rectangle(ax1, 'Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', line_width, 'LineStyle', '--');
+hold(ax1, 'off');
+title(ax1, 'k_{on}', 'FontSize', base_font_size);
+ylabel(ax1, 'Line Index (y)', 'FontSize', base_font_size);
+colorbar(ax1);
 
 % --- 2D Plot for k_off ---
-ax2 = subplot(1, 3, 2);
-imagesc(x_axis_coords, y_axis_coords, koff_slice');
-axis xy;
-hold on;
-rectangle('Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', 2, 'LineStyle', '--');
-hold off;
-title('k_{off} Surface');
-xlabel('Position along Flow (x)');
-ylabel('Line Index (y)');
-colorbar;
+ax2 = nexttile;
+imagesc(ax2, x_axis_coords, y_axis_coords, koff_slice');
+axis(ax2, 'xy');
+hold(ax2, 'on');
+rectangle(ax2, 'Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', line_width, 'LineStyle', '--');
+hold(ax2, 'off');
+title(ax2, 'k_{off}', 'FontSize', base_font_size);
+xlabel(t, 'Position along Flow (x)', 'FontSize', base_font_size); % Add a shared x-label
+set(ax2, 'YTickLabel', []); % Remove redundant Y-axis labels
+
+colorbar(ax2);
 
 % --- 2D Plot for s_max ---
-ax3 = subplot(1, 3, 3);
-imagesc(x_axis_coords, y_axis_coords, smax_slice');
-axis xy;
-hold on;
-rectangle('Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', 2, 'LineStyle', '--');
-hold off;
-title('s_{max} Surface');
-xlabel('Position along Flow (x)');
-ylabel('Line Index (y)');
-colorbar;
+ax3 = nexttile;
+imagesc(ax3, x_axis_coords, y_axis_coords, smax_slice');
+axis(ax3, 'xy');
+hold(ax3, 'on');
+rectangle(ax3, 'Position', rect_pos, 'EdgeColor', 'r', 'LineWidth', line_width, 'LineStyle', '--');
+hold(ax3, 'off');
+title(ax3, 's_{max}', 'FontSize', base_font_size);
+set(ax3, 'YTickLabel', []); % Remove redundant Y-axis labels
 
-%sgtitle('2D Visualization of Surface Parameter Heterogeneity', 'FontSize', 16, 'FontWeight', 'bold');
+colorbar(ax3);
 
-% --- SAVE FULL FIGURE ---
-print(fig1, 'Adsorption/LineAverageModel/Figures/figure_1_surf_params_2D.png', '-dpng', '-r300');
-print(fig1, 'Adsorption/LineAverageModel/Figures/EPS/figure_1_surf_params_2D.eps', '-depsc');
+% --- Set font size for all axes in the layout ---
+set([ax1, ax2, ax3], 'FontSize', base_font_size - 1);
+
+% --- SAVE THE ENTIRE FIGURE ---
+% Use the helper function to set the final size to 8.4cm and save
+save_pub_fig(fig1, 'Adsorption/LineAverageModel/Figures/figure_1_surf_params_2D_combined', target_fig_width_cm);
+close(fig1); % Close figure after saving
 
 % --- SAVE EACH SUBPLOT INDIVIDUALLY ---
-fprintf('Saving individual surface parameter heatmaps as EPS files...\n');
-base_path = 'Adsorption/LineAverageModel/Figures/EPS/';
-save_subplot_as_eps(ax1, [base_path, 'surf_params_heatmap_kon.eps']);
-save_subplot_as_eps(ax2, [base_path, 'surf_params_heatmap_koff.eps']);
-save_subplot_as_eps(ax3, [base_path, 'surf_params_heatmap_smax.eps']);
-fprintf('Finished saving individual surface parameter heatmaps.\n');
+% fprintf('Saving individual surface parameter heatmaps as EPS files...\n');
+% base_path = 'Adsorption/LineAverageModel/Figures/EPS/';
+% save_subplot_as_eps(ax1, [base_path, 'surf_params_heatmap_kon.eps']);
+% save_subplot_as_eps(ax2, [base_path, 'surf_params_heatmap_koff.eps']);
+% save_subplot_as_eps(ax3, [base_path, 'surf_params_heatmap_smax.eps']);
+% fprintf('Finished saving individual surface parameter heatmaps.\n');
 % =========================================================================
 %% --- STEP 1: GENERATE "EXPERIMENTAL" DATA ---
 % By creating this data upfront, we know the exact size of all outputs
@@ -307,13 +317,46 @@ optim_opts = optimoptions('lsqnonlin', ...
 residual_fun = @(log_params) compute_residuals_1D_model(log_params, exp_settings, exp_data, model_config);
 tic;
 % Run optimization
-[opt_log_params, ~] = lsqnonlin(residual_fun, p0, lb, ub, optim_opts);
+[opt_log_params, resnorm, residual, exitflag, output, lambda, J_opt] = lsqnonlin(residual_fun, p0, lb, ub, optim_opts);
+% --- NEW: STEP 3.5: CALCULATE CONFIDENCE INTERVALS ---
+fprintf('\nCalculating 95%% Confidence Intervals for the estimated parameters...\n');
+
+% 1. Estimate the variance of the measurement noise from the residuals
+% Degrees of freedom = (num_data_points - num_parameters)
+dof = numel(residual) - N_params_1D; 
+noise_variance_est = resnorm / dof; % This is our estimate for sigma_s^2
+
+% 2. Calculate the covariance matrix of the parameters (in log10 space)
+% The formula is Cov(p) = sigma_s^2 * inv(J' * J)
+% We use pinv (pseudo-inverse) for better numerical stability than inv
+covariance_matrix_log = noise_variance_est * pinv(full(J_opt' * J_opt));
+
+% 3. Extract the variances and standard errors for each parameter
+param_variances_log = diag(covariance_matrix_log);
+param_stderr_log = sqrt(param_variances_log);
+
+% 4. Calculate the 95% confidence intervals
+% For a 95% CI, the critical value is ~1.96
+ci_95_log = 1.96 * param_stderr_log;
+
+% The final results are the optimal log parameters +/- the interval
+upper_bound_log = opt_log_params + ci_95_log;
+lower_bound_log = opt_log_params - ci_95_log;
+
+fprintf('Confidence interval calculation complete.\n');
+
 toc;
 % --- MODIFIED --- Analyze and plot results for 1D model
 opt_params_1D = 10.^opt_log_params;
 % Plot recovery of the 1D parameters
-plot_parameter_recovery_1D(p_true_1D, opt_params_1D, 10.^p0, ads_y_dim);
-% =========================================================================
+% Convert intervals back to linear space for plotting
+upper_bound_lin = 10.^upper_bound_log;
+lower_bound_lin = 10.^lower_bound_log;
+y_errors_pos = upper_bound_lin - opt_params_1D;
+y_errors_neg = opt_params_1D - lower_bound_lin;
+
+% Update the call to the plotting function
+plot_parameter_recovery_1D(p_true_1D, opt_params_1D, 10.^p0, ads_y_dim, y_errors_neg, y_errors_pos);% =========================================================================
 %% --- STEP 4: PHYSICALLY-ACCURATE VALIDATION WORKFLOW ---
 % =========================================================================
 fprintf('\n--- Starting Full Physical Model Validation ---\n');
@@ -388,8 +431,14 @@ for t_idx = 1:size(s_obs_ru, 1)
     end
 end
 toc;    
-fprintf('Generating advanced SPR curve and image visualization...\n');
+fprintf('Generating advanced SPR curve and image visualization for publication...\n');
     
+% --- Define common plotting properties for publication ---
+target_fig_width_cm = 8.4; % IEEE single column width
+base_font_size = 8;        % Match your paper's caption font size (e.g., 8pt)
+line_width = 1.5;          % Line width for main plot lines
+line_width_thin = 1.0;     % Line width for annotations (like xline)
+
 % --- Calculations (from your existing code) ---
 line_to_plot = round(ads_y_dim/2);
 [~, t_idx_max_response] = max(s_obs_ru(:, line_to_plot));
@@ -398,70 +447,71 @@ n2_baseline = n_bulk;
 ru_max = s_obs_ru(t_idx_max_response, line_to_plot);
 n2_analyte_max = n_bulk + (ru_max * RU_TO_RIU);
 [Rp_analyte, theta_res_analyte] = fresnel_spr_curve(angle_range, n0, n1, n2_analyte_max, n_bulk, d1, d2, wavelength);
-% Calculate the shift values for annotation
 angle_shift = theta_res_analyte - theta_res_baseline;
-ri_change = n2_analyte_max - n2_baseline;
+
 % --- Create the Figure and Manually Position Axes ---
-fig3 = figure('Name', 'SPR Curve Shift with Image Visualization', 'Position', [100, 100, 800, 800]);
-% Define positions for the plots: [left, bottom, width, height]
-pos_main_plot = [0.13, 0.35, 0.77, 0.55]; % Large plot on top
-pos_img1 = [0.13, 0.20, 0.77, 0.05];      % Thin image strip below
-pos_img2 = [0.13, 0.10, 0.77, 0.05];      % Second thin image strip
-% Create the axes objects
+fig3_pub = figure('Name', 'SPR Curve Shift with Image Visualization');
+
+pos_main_plot = [0.15, 0.35, 0.77, 0.55]; 
+pos_img1 = [0.15, 0.22, 0.77, 0.06];      
+pos_img2 = [0.15, 0.15, 0.77, 0.06];      
+
 ax_main = axes('Position', pos_main_plot);
 ax_img_baseline = axes('Position', pos_img1);
 ax_img_analyte = axes('Position', pos_img2);
+
 % --- Plot 1: The Main SPR Curves (on the top axes) ---
-plot(ax_main, angle_range, Rp_baseline, 'b-', 'LineWidth', 2, 'DisplayName', sprintf('Baseline (n_2 = %.4f)', n2_baseline));
+% CHANGE 1: Shorten the DisplayName text
+plot(ax_main, angle_range, Rp_baseline, 'b-', 'LineWidth', line_width, 'DisplayName', 'Baseline');
 hold(ax_main, 'on');
-plot(ax_main, angle_range, Rp_analyte, 'r-', 'LineWidth', 2, 'DisplayName', sprintf('Max Response (n_2 = %.4f)', n2_analyte_max));
-xline(ax_main, theta_res_baseline, 'b--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
-xline(ax_main, theta_res_analyte, 'r--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+plot(ax_main, angle_range, Rp_analyte, 'r-', 'LineWidth', line_width, 'DisplayName', 'Max Response');
+xline(ax_main, theta_res_baseline, 'b--', 'LineWidth', line_width_thin, 'HandleVisibility', 'off');
+xline(ax_main, theta_res_analyte, 'r--', 'LineWidth', line_width_thin, 'HandleVisibility', 'off');
 hold(ax_main, 'off');
 grid(ax_main, 'on');
-ylabel(ax_main, 'Reflectivity');
-title(ax_main, sprintf('SPR Curve Shift for Line %d', line_to_plot));
-legend(ax_main, 'Location', 'northeast');
+box(ax_main, 'on');
+ylabel(ax_main, 'Reflectivity', 'FontSize', base_font_size);
 ylim(ax_main, [0, 1]);
-set(ax_main, 'XTickLabel', []); % Remove x-axis labels to avoid overlap
-% --- Plot 2: The "SPR Image" for the Baseline Curve ---
+set(ax_main, 'XTickLabel', []); 
+set(ax_main, 'FontSize', base_font_size - 1);
+
+% CHANGE 2: Move the n2 information into the title
+% title_str = sprintf('SPR Curve Shift (n_{2,base}=%.4f)', n2_baseline);
+% title(ax_main, title_str, 'FontSize', base_font_size);
+
+% CHANGE 3: Create a compact, boxless legend
+lgd = legend(ax_main, 'Location', 'southeast', 'FontSize', base_font_size - 2);
+lgd.Box = 'off'; % This removes the box around the legend
+
+% --- Plot 2 & 3: The "SPR Images" (code is unchanged) ---
 imagesc(ax_img_baseline, angle_range, 1, Rp_baseline);
-colormap(ax_img_baseline, 'gray');
-caxis(ax_img_baseline, [0,1]);
-set(ax_img_baseline, 'YTick', []); % Remove y-axis ticks
-set(ax_img_baseline, 'XTickLabel', []); % Remove x-axis labels
-% --- Plot 3: The "SPR Image" for the Max Response Curve ---
+colormap(ax_img_baseline, 'gray'); caxis(ax_img_baseline, [0,1]);
+set(ax_img_baseline, 'YTick', []); set(ax_img_baseline, 'XTickLabel', []);
 imagesc(ax_img_analyte, angle_range, 1, Rp_analyte);
-colormap(ax_img_analyte, 'gray');
-caxis(ax_img_analyte, [0,1]);
+colormap(ax_img_analyte, 'gray'); caxis(ax_img_analyte, [0,1]);
 set(ax_img_analyte, 'YTick', []);
-xlabel(ax_img_analyte, 'Incident Angle (degrees)'); % Only show x-label on the bottom plot
-% --- Link all X-Axes together ---
+xlabel(ax_img_analyte, 'Incident Angle (degrees)', 'FontSize', base_font_size);
+set(ax_img_analyte, 'FontSize', base_font_size - 1);
+
+% --- Link all X-Axes together (code is unchanged) ---
 linkaxes([ax_main, ax_img_baseline, ax_img_analyte], 'x');
-xlim(ax_main, [angle_range(1), angle_range(end)]); % Set initial limits
-% --- Add Annotations for the Shift Arrow and Text ---
-% Get position of the main plot to convert data coordinates to figure coordinates
+xlim(ax_main, [angle_range(1), angle_range(end)]); 
+
+% --- Annotations (code is unchanged) ---
 ax_pos = get(ax_main, 'Position');
-xlims = get(ax_main, 'XLim');
-ylims = get(ax_main, 'YLim');
-% Arrow coordinates in data space
-y_arrow = 0.5; % Y position for the arrow
-p1_data = [theta_res_baseline, y_arrow];
-p2_data = [theta_res_analyte, y_arrow];
-% Convert to normalized figure units for the annotation
+xlims = get(ax_main, 'XLim'); ylims = get(ax_main, 'YLim');
+y_arrow = 0.5; p1_data = [theta_res_baseline, y_arrow]; p2_data = [theta_res_analyte, y_arrow];
 x_arrow_norm = ( [p1_data(1), p2_data(1)] - xlims(1) ) / diff(xlims);
 y_arrow_norm = ( [p1_data(2), p2_data(2)] - ylims(1) ) / diff(ylims);
 x_arrow_fig = ax_pos(1) + x_arrow_norm * ax_pos(3);
 y_arrow_fig = ax_pos(2) + y_arrow_norm * ax_pos(4);
-% Draw the double-headed arrow
-annotation('doublearrow', x_arrow_fig, y_arrow_fig, 'LineWidth', 2, 'Color', 'k', 'HeadStyle', 'vback2', 'HeadSize', 10);
-% Add text annotation with shift information
+annotation('doublearrow', x_arrow_fig, y_arrow_fig, 'LineWidth', line_width_thin, 'Color', 'k', 'HeadStyle', 'vback2', 'HeadSize', 6);
 text_str = sprintf('\\Delta\\theta_{SPR} = %.3f°', angle_shift);
-text(ax_main, xlims(1) + 0.05*diff(xlims), ylims(2) - 0.1*diff(ylims), text_str, ...
-    'FontSize', 12, 'EdgeColor', 'black', 'BackgroundColor', 'white');
-% --- SAVE FIGURE ---
-print(fig3, 'Adsorption/LineAverageModel/Figures/figure_spr_shift_composite.png', '-dpng', '-r300');
-print(fig3, 'Adsorption/LineAverageModel/Figures/EPS/figure_spr_shift_composite.eps', '-depsc');
+text(ax_main, xlims(1) + 0.05*diff(xlims), ylims(1) + 0.9*diff(ylims), text_str, 'FontSize', base_font_size - 1, 'EdgeColor', 'black', 'BackgroundColor', 'white', 'VerticalAlignment', 'top');
+
+% --- SAVE THE FINAL FIGURE ---
+save_pub_fig(fig3_pub, 'Adsorption/LineAverageModel/Figures/figure_spr_shift_composite_pub', target_fig_width_cm);
+close(fig3_pub);
 %% --- STEP 5: VIDEO CREATION ---
 % =========================================================================
 if generate_video_frames
@@ -521,96 +571,177 @@ ylim([0, 1]);
 print(fig_spr_curves, 'Adsorption/LineAverageModel/Figures/figure_spr_curves_all_lines.png', '-dpng', '-r300');
 print(fig_spr_curves, 'Adsorption/LineAverageModel/Figures/EPS/figure_spr_curves_all_lines.eps', '-depsc');
 %% 
-fig3b = figure('Name', 'Proper Sensorgram: Resonance Angle vs. Time', 'Position', [300, 300, 1400, 700]);
+fprintf('Generating publication-ready sensorgram comparison plot...\n');
+
+% --- Define common plotting properties for publication ---
+target_fig_width_cm = 8.4; % IEEE single column width
+base_font_size = 8;        % Match your paper's caption font size (e.g., 8pt)
+line_width = 1.2;          % Line width for plot lines
+
+% --- Create the figure and layout ---
+fig3b_pub = figure('Name', 'Proper Sensorgram: Resonance Angle vs. Time');
 lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
+
+% Use tiledlayout for compact spacing
+t = tiledlayout(1, length(lines_to_plot), 'TileSpacing', 'compact', 'Padding', 'compact');
+
+% --- Loop through the lines to plot ---
 for i = 1:length(lines_to_plot)
-    subplot(1, length(lines_to_plot), i);
+    ax = nexttile; % Get the axes for the current tile
     line_idx = lines_to_plot(i);
     
-    % This is the proper, physically-correct sensorgram
-    plot(t_exp, theta_spr_vs_time(:, line_idx), 'r-', 'LineWidth', 2, 'DisplayName', 'Sensorgram (Resonance Angle)');
+    % --- Plot on the LEFT Y-axis (Resonance Angle) ---
+    yyaxis(ax, 'left');
+    plot(ax, t_exp, theta_spr_vs_time(:, line_idx), 'r-', 'LineWidth', line_width, 'DisplayName', 'Resonance Angle');
     
-    grid on;
-    xlabel('Time (s)');
-    ylabel('Resonance Angle (degrees)');
-    title(sprintf('Sensorgram for Line %d', line_idx));
+    hold(ax, 'on');
+    grid(ax, 'on');
     
-    % For validation, plot the original RU data on a separate y-axis
-    yyaxis right
-    plot(t_exp, s_obs_ru(:, line_idx), 'b--', 'LineWidth', 1.5, 'DisplayName', 'Original Simulation (RU)');
-    ylabel('Response Units (RU)');
+    % Style the left axis
+    ax.YAxis(1).Color = 'r';
+    if i == 1 % Only show the first y-label
+        ylabel(ax, 'Res. Angle (deg)', 'FontSize', base_font_size);
+    else
+        % Remove redundant tick labels from interior plots
+        set(ax, 'YTickLabel', []); 
+    end
     
-    legend('Location', 'best');
-    xlim([0, t_exp(end)]);
+    % --- Plot on the RIGHT Y-axis (Response Units) ---
+    yyaxis(ax, 'right');
+    plot(ax, t_exp, s_obs_ru(:, line_idx), 'b--', 'LineWidth', line_width, 'DisplayName', 'Original (RU)');
+    
+    hold(ax, 'off');
+    
+    % Style the right axis
+    ax.YAxis(2).Color = 'b';
+    if i == length(lines_to_plot) % Only show the last y-label
+        ylabel(ax, 'Response (RU)', 'FontSize', base_font_size);
+    else
+        set(ax, 'YTickLabel', []);
+    end
+    
+    % --- Common properties for this subplot ---
+    title(ax, sprintf('Line %d', line_idx), 'FontSize', base_font_size);
+    xlim(ax, [0, t_exp(end)]);
+    set(ax, 'FontSize', base_font_size - 1); % Set tick font size
+    box(ax, 'on');
 end
-%sgtitle('Final Validation: The Physically Correct Sensorgram (Angle vs. Time)', 'FontSize', 16);
-% --- SAVE FIGURE ---
-print(fig3b, 'Adsorption/LineAverageModel/Figures/figure_angle_vs_ru.png', '-dpng', '-r300');
-print(fig3b, 'Adsorption/LineAverageModel/Figures/EPS/figure_angle_vs_ru.eps', '-depsc');
-%% 
-global_sensorgram = sum(formula_response_vs_time, 2);
-% --- Step 2: Create the Figure and Subplots ---
-fig_formula = figure('Name', 'Final Sensorgram Results from Formula', 'Position', [200, 200, 1400, 600]);
-% --- Plot 1: All Individual Line Sensorgrams ---
-subplot(1, 2, 1);
-plot(t_exp, formula_response_vs_time, 'LineWidth', 1.5);
-grid on;
-title('Individual Line Sensorgrams');
-xlabel('Time (s)');
-ylabel('Change from Baseline (\Delta{N}_s^{eff})');
-xlim([0, t_exp(end)]);
-% Optional: Add a legend if you have a small number of lines
-if ads_y_dim <= 10
-    legend(arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false), 'Location', 'best');
-end
-% --- Plot 2: Global (Summed) Sensorgram ---
-subplot(1, 2, 2);
-plot(t_exp, global_sensorgram, 'r-', 'LineWidth', 2);
-grid on;
-title('Global (Summed) Sensorgram');
-xlabel('Time (s)');
-ylabel('Total Change (\Sigma \Delta{N}_s^{eff})');
-xlim([0, t_exp(end)]);
-sgtitle('Final Sensorgrams Calculated from Analytical Formula', 'FontSize', 16, 'FontWeight', 'bold');
-% --- SAVE FIGURE ---
-print(fig_formula, 'Adsorption/LineAverageModel/Figures/figure_final_sensorgrams_formula.png', '-dpng', '-r300');
-print(fig_formula, 'Adsorption/LineAverageModel/Figures/EPS/figure_final_sensorgrams_formula.eps', '-depsc');
 
-absolute_neff_vs_time = formula_response_vs_time + n_bulk;
-% --- Step 2: Calculate the Global (Summed) Absolute N_s_eff ---
-global_absolute_neff = n_bulk+global_sensorgram;
-% --- Step 3: Create the Figure and Subplots ---
-fig_abs_ri = figure('Name', 'Absolute Effective RI Sensorgrams', 'Position', [200, 200, 1400, 600]);
+% --- Add shared elements to the entire layout ---
+xlabel(t, 'Time (s)', 'FontSize', base_font_size);
+lgd = legend(ax, 'Location', 'best', 'FontSize', base_font_size - 2);
+lgd.Box = 'off';
+
+%title(t, 'Final Validation: Physically Correct Sensorgram', 'FontSize', base_font_size + 1);
+% --- SAVE THE FINAL FIGURE ---
+save_pub_fig(fig3b_pub, 'Adsorption/LineAverageModel/Figures/figure_angle_vs_ru_pub', target_fig_width_cm);
+close(fig3b_pub);
+%% 
+fprintf('Generating publication-ready final sensorgram plot...\n');
+
+% --- Define common plotting properties for publication ---
+target_fig_width_cm = 8.4; % IEEE single column width
+base_font_size = 8;        % Match your paper's caption font size (e.g., 8pt)
+line_width_thin = 0.8;     % Thinner lines for the dense plot
+line_width_thick = 1.5;    % Thicker line for the single plot
+
+% --- Calculate data ---
+global_sensorgram = sum(formula_response_vs_time, 2);
+
+% --- Create the Figure and Layout ---
+fig_formula_pub = figure('Name', 'Final Sensorgram Results from Formula');
+t = tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+
 % --- Plot 1: All Individual Line Sensorgrams ---
-subplot(1, 2, 1);
-plot(t_exp, absolute_neff_vs_time, 'LineWidth', 1.5);
-grid on;
-title('Individual Line Sensorgrams (Absolute N_s^{eff})');
-xlabel('Time (s)');
-ylabel('Absolute Effective RI ({N}_s^{eff})');
-xlim([0, t_exp(end)]);
+ax1 = nexttile;
+plot(ax1, t_exp, formula_response_vs_time, 'LineWidth', line_width_thin);
+grid(ax1, 'on');
+box(ax1, 'on');
+title(ax1, 'Individual Lines', 'FontSize', base_font_size);
+xlabel(ax1, 'Time (s)', 'FontSize', base_font_size);
+ylabel(ax1, 'Change from Baseline (\DeltaN_s^{eff})', 'FontSize', base_font_size);
+xlim(ax1, [0, t_exp(end)]);
+set(ax1, 'FontSize', base_font_size - 1);
+
 % Optional: Add a legend if you have a small number of lines
-if ads_y_dim <= 10
-    legend(arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false), 'Location', 'best');
+if ads_y_dim <= 5 % Reduced threshold for a compact plot
+    legend(ax1, arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false), ...
+           'Location', 'northwest', 'FontSize', base_font_size - 2);
 end
+
 % --- Plot 2: Global (Summed) Sensorgram ---
-subplot(1, 2, 2);
-plot(t_exp, global_absolute_neff, 'r-', 'LineWidth', 2);
-grid on;
-title('Global (Summed) Sensorgram');
-xlabel('Time (s)');
-ylabel('Absolute Effective RI (\Sigma {N}_s^{eff})');
-xlim([0, t_exp(end)]);
-sgtitle('Final Sensorgrams Plotted as Absolute N_s^{eff}', 'FontSize', 16, 'FontWeight', 'bold');
-% --- SAVE FIGURE ---
-print(fig_abs_ri, 'Adsorption/LineAverageModel/Figures/figure_absolute_ri_sensorgrams.png', '-dpng', '-r300');
-print(fig_abs_ri, 'Adsorption/LineAverageModel/Figures/EPS/figure_absolute_ri_sensorgrams.eps', '-depsc');
+ax2 = nexttile;
+plot(ax2, global_sensorgram, 'r-', 'LineWidth', line_width_thick);
+grid(ax2, 'on');
+box(ax2, 'on');
+title(ax2, 'Global (Summed)', 'FontSize', base_font_size);
+xlabel(ax2, 'Time (s)', 'FontSize', base_font_size);
+ylabel(ax2, 'Total Change (\Sigma\DeltaN_s^{eff})', 'FontSize', base_font_size);
+xlim(ax2, [0, t_exp(end)]);
+set(ax2, 'FontSize', base_font_size - 1);
+
+% --- Add a main title to the layout ---
+title(t, 'Sensorgrams from Analytical Formula', 'FontSize', base_font_size + 1);
+
+% --- SAVE THE FINAL FIGURE ---
+save_pub_fig(fig_formula_pub, 'Adsorption/LineAverageModel/Figures/figure_final_sensorgrams_formula_pub', target_fig_width_cm);
+close(fig_formula_pub);
+
+fprintf('Generating publication-ready absolute RI sensorgram plot...\n');
+
+% --- Define common plotting properties for publication ---
+target_fig_width_cm = 8.4; % IEEE single column width
+base_font_size = 8;        % Match your paper's caption font size (e.g., 8pt)
+line_width_thin = 0.8;     % Thinner lines for the dense plot
+line_width_thick = 1.5;    % Thicker line for the single plot
+
+% --- Step 1: Calculate data ---
+absolute_neff_vs_time = formula_response_vs_time + n_bulk;
+global_absolute_neff = n_bulk + global_sensorgram;
+
+% --- Step 2: Create the Figure and Layout ---
+fig_abs_ri_pub = figure('Name', 'Absolute Effective RI Sensorgrams');
+t = tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+% --- Plot 1: All Individual Line Sensorgrams ---
+ax1 = nexttile;
+plot(ax1, t_exp, absolute_neff_vs_time, 'LineWidth', line_width_thin);
+grid(ax1, 'on');
+box(ax1, 'on');
+title(ax1, 'Individual Lines', 'FontSize', base_font_size);
+xlabel(ax1, 'Time (s)', 'FontSize', base_font_size);
+ylabel(ax1, 'Abs. Eff. RI (N_s^{eff})', 'FontSize', base_font_size);
+xlim(ax1, [0, t_exp(end)]);
+set(ax1, 'FontSize', base_font_size - 1);
+
+% Optional: Add a legend if you have a small number of lines
+if ads_y_dim <= 5 % Reduced threshold for a compact plot
+    legend(ax1, arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false), ...
+           'Location', 'northwest', 'FontSize', base_font_size - 2);
+end
+
+% --- Plot 2: Global (Summed) Sensorgram ---
+ax2 = nexttile;
+plot(ax2, global_absolute_neff, 'r-', 'LineWidth', line_width_thick);
+grid(ax2, 'on');
+box(ax2, 'on');
+title(ax2, 'Global (Summed)', 'FontSize', base_font_size);
+xlabel(ax2, 'Time (s)', 'FontSize', base_font_size);
+ylabel(ax2, 'Abs. Eff. RI (\Sigma N_s^{eff})', 'FontSize', base_font_size);
+xlim(ax2, [0, t_exp(end)]);
+set(ax2, 'FontSize', base_font_size - 1);
+
+% --- Add a main title to the layout ---
+title(t, 'Sensorgrams as Absolute Effective RI', 'FontSize', base_font_size + 1);
+
+% --- SAVE THE FINAL FIGURE ---
+save_pub_fig(fig_abs_ri_pub, 'Adsorption/LineAverageModel/Figures/figure_absolute_ri_sensorgrams_pub', target_fig_width_cm);
+close(fig_abs_ri_pub);
 % =========================================================================
-%% --- STEP 7: INVERSE PROCESS ---
+%% --- STEP 7: INVERSE PROCESS (Corrected with Single Legend)---
 % =========================================================================
-% --- Step 7.1: Analyze saved frames to reconstruct the sensorgram ---
+% --- Step 7.1-7.3: Data Calculation (code is unchanged) ---
 theta_extracted_from_frames = analyze_spr_frames_to_get_sensorgram(video_frames_folder, angle_range);
-% --- Step 7.2: Convert extracted angles back to Refractive Index ---
 fprintf('Converting extracted angles back to Refractive Index via interpolation...\n');
 n2_reconstructed_vs_time = zeros(size(theta_extracted_from_frames));
 parfor j_idx = 1:ads_y_dim
@@ -618,173 +749,292 @@ parfor j_idx = 1:ads_y_dim
     unique_n2s = n2_vs_time(unique_indices, j_idx);
     n2_reconstructed_vs_time(:, j_idx) = interp1(unique_thetas, unique_n2s, theta_extracted_from_frames(:, j_idx), 'linear', 'extrap');
 end
-% --- Step 7.3: Convert reconstructed RI back to RU ---
 ru_reconstructed = (n2_reconstructed_vs_time - n_bulk) / RU_TO_RIU;
+
 % =====================================================================
-% --- FINAL VALIDATION PLOTS WITH QUANTITATIVE ERROR IN LEGENDS ---
+% --- FINAL VALIDATION PLOTS WITH SINGLE, CLEAN LEGEND ---
 % =====================================================================
 lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
+target_fig_width_cm = 8.4; 
+base_font_size = 8;        
+line_width_thick = 1.5;    
+line_width_thin = 1.0;     
 
-% --- Plot A: Validation in Resonance Angle units ---
-fig4a = figure('Name', 'Final Validation: Original vs. Extracted Angle', 'Position', [300, 300, 1800, 500]);
-ax_handles_a = gobjects(1, length(lines_to_plot)); % Preallocate handles array
+%% --- Plot A: Validation in Resonance Angle units (Corrected) ---
+fprintf('\n--- Angle Validation Results ---\n');
+fig4a_pub = figure('Name', 'Final Validation: Original vs. Extracted Angle');
+t_a = tiledlayout(1, length(lines_to_plot), 'TileSpacing', 'compact', 'Padding', 'compact');
 for i = 1:length(lines_to_plot)
-    ax_handles_a(i) = subplot(1, length(lines_to_plot), i);
+    ax = nexttile;
     line_idx = lines_to_plot(i);
     original_angle = theta_spr_vs_time(:, line_idx);
     extracted_angle = theta_extracted_from_frames(:, line_idx);
     
+    % --- FIX: Print errors to the command window ---
     [offset, error_abs] = calculate_validation_error(original_angle, extracted_angle);
-    extracted_legend_text = sprintf('Extracted (Offset=%.1e, Error=%.1e)', offset, error_abs);
-    plot(t_exp, original_angle - original_angle(1), 'b-', 'LineWidth', 4, 'DisplayName', 'Original');
-    hold on;
-    plot(t_exp, extracted_angle - extracted_angle(1), 'r--', 'LineWidth', 2, 'DisplayName', extracted_legend_text);
+    fprintf('Angle Validation for Line %d: Abs. Error = %.2e (deg)\n', line_idx, error_abs);
     
-    grid on; xlabel('Time (s)'); ylabel('Change in Resonance Angle (degrees)');
-    title(sprintf('Angle Validation for Line %d', line_idx));
-    legend('Location', 'best'); xlim([0, t_exp(end)]);
+    % --- FIX: Use static legend text ---
+    plot(ax, t_exp, original_angle - original_angle(1), 'b-', 'LineWidth', line_width_thick, 'DisplayName', 'Original');
+    hold(ax, 'on');
+    plot(ax, t_exp, extracted_angle - extracted_angle(1), 'r--', 'LineWidth', line_width_thin, 'DisplayName', 'Reconstructed');
+    hold(ax, 'off');
+    
+    grid(ax, 'on'); box(ax, 'on');
+    title(ax, sprintf('Line %d', line_idx), 'FontSize', base_font_size);
+    xlim(ax, [0, t_exp(end)]);
+    set(ax, 'FontSize', base_font_size - 1);
+    if i == 1, ylabel(ax, '\Delta Angle (deg)', 'FontSize', base_font_size); end
 end
-%sgtitle('Final Validation in Angle Space', 'FontSize', 16);
-% --- Save full figure ---
-print(fig4a, 'Adsorption/LineAverageModel/Figures/figure_4a_validation_angle.png', '-dpng', '-r300');
-print(fig4a, 'Adsorption/LineAverageModel/Figures/EPS/figure_4a_validation_angle.eps', '-depsc');
-% --- Save individual subplots ---
-fprintf('Saving individual angle validation subplots as EPS files...\n');
-base_path = 'Adsorption/LineAverageModel/Figures/EPS/';
-for k = 1:length(ax_handles_a)
-    line_idx = lines_to_plot(k);
-    filename = sprintf('%svalidation_angle_line_%d.eps', base_path, line_idx);
-    save_subplot_as_eps(ax_handles_a(k), filename);
-end
-fprintf('Finished saving angle validation subplots.\n');
+% --- FIX: Create a single, shared legend for the entire figure ---
+lgd = legend(ax); % Create legend attached to the LAST axes
+lgd.Layout.Tile = 'east'; % Move the legend to its own space outside the plots
 
+% title(t_a, 'Validation in Resonance Angle Space', 'FontSize', base_font_size + 1);
+xlabel(t_a, 'Time (s)', 'FontSize', base_font_size);
+save_pub_fig(fig4a_pub, 'Adsorption/LineAverageModel/Figures/figure_4a_validation_angle_pub', target_fig_width_cm);
+close(fig4a_pub);
 
-% --- Plot B: Validation in Refractive Index units ---
-fig4b = figure('Name', 'Final Validation: Original vs. Reconstructed RI', 'Position', [300, 300, 1800, 500]);
-ax_handles_b = gobjects(1, length(lines_to_plot)); % Preallocate handles array
+%% --- Plot B: Validation in Refractive Index units (Corrected) ---
+fprintf('\n--- Refractive Index Validation Results ---\n');
+fig4b_pub = figure('Name', 'Final Validation: Original vs. Reconstructed RI');
+t_b = tiledlayout(1, length(lines_to_plot), 'TileSpacing', 'compact', 'Padding', 'compact');
 for i = 1:length(lines_to_plot)
-    ax_handles_b(i) = subplot(1, length(lines_to_plot), i);
+    ax = nexttile;
     line_idx = lines_to_plot(i);
     original_ri = n2_vs_time(:, line_idx);
     reconstructed_ri = n2_reconstructed_vs_time(:, line_idx);
     
+    % --- FIX: Print errors to the command window ---
     [offset, error_abs] = calculate_validation_error(original_ri, reconstructed_ri);
-    extracted_legend_text = sprintf('Reconstructed (Offset=%.1e, Error=%.1e)', offset, error_abs);
-    plot(t_exp, original_ri - original_ri(1), 'b-', 'LineWidth', 4, 'DisplayName', 'Original');
-    hold on;
-    plot(t_exp, reconstructed_ri - reconstructed_ri(1), 'r--', 'LineWidth', 2, 'DisplayName', extracted_legend_text);
+    fprintf('RI Validation for Line %d: Abs. Error = %.2e (RIU)\n', line_idx, error_abs);
+
+    % --- FIX: Use static legend text ---
+    plot(ax, t_exp, original_ri - original_ri(1), 'b-', 'LineWidth', line_width_thick, 'DisplayName', 'Original');
+    hold(ax, 'on');
+    plot(ax, t_exp, reconstructed_ri - reconstructed_ri(1), 'r--', 'LineWidth', line_width_thin, 'DisplayName', 'Reconstructed');
+    hold(ax, 'off');
     
-    grid on; xlabel('Time (s)'); ylabel('Change in Refractive Index (dRIU)');
-    title(sprintf('RI Validation for Line %d', line_idx));
-    legend('Location', 'best'); xlim([0, t_exp(end)]);
+    grid(ax, 'on'); box(ax, 'on');
+    title(ax, sprintf('Line %d', line_idx), 'FontSize', base_font_size);
+    xlim(ax, [0, t_exp(end)]);
+    set(ax, 'FontSize', base_font_size - 1);
+    if i == 1, ylabel(ax, '\DeltaRIU', 'FontSize', base_font_size); end
 end
-%sgtitle('Final Validation in Refractive Index Space', 'FontSize', 16);
-% --- Save full figure ---
-print(fig4b, 'Adsorption/LineAverageModel/Figures/figure_4b_validation_ri.png', '-dpng', '-r300');
-print(fig4b, 'Adsorption/LineAverageModel/Figures/EPS/figure_4b_validation_ri.eps', '-depsc');
-% --- Save individual subplots ---
-fprintf('Saving individual RI validation subplots as EPS files...\n');
-for k = 1:length(ax_handles_b)
-    line_idx = lines_to_plot(k);
-    filename = sprintf('%svalidation_ri_line_%d.eps', base_path, line_idx);
-    save_subplot_as_eps(ax_handles_b(k), filename);
-end
-fprintf('Finished saving RI validation subplots.\n');
+% --- FIX: Create a single, shared legend for the entire figure ---
+lgd = legend(ax);
+lgd.Layout.Tile = 'east';
 
+% title(t_b, 'Validation in Refractive Index Space', 'FontSize', base_font_size + 1);
+xlabel(t_b, 'Time (s)', 'FontSize', base_font_size);
+save_pub_fig(fig4b_pub, 'Adsorption/LineAverageModel/Figures/figure_4b_validation_ri_pub', target_fig_width_cm);
+close(fig4b_pub);
 
-% --- Plot C: Validation in Response Units ---
-fig4c = figure('Name', 'Final Round-Trip Validation: RU Original vs. Reconstructed', 'Position', [300, 300, 1800, 500]);
-ax_handles_c = gobjects(1, length(lines_to_plot)); % Preallocate handles array
+%% --- Plot C: Validation in Response Units (Corrected) ---
+fprintf('\n--- Response Unit Validation Results ---\n');
+fig4c_pub = figure('Name', 'Final Round-Trip Validation: RU Original vs. Reconstructed');
+t_c = tiledlayout(1, length(lines_to_plot), 'TileSpacing', 'compact', 'Padding', 'compact');
 for i = 1:length(lines_to_plot)
-    ax_handles_c(i) = subplot(1, length(lines_to_plot), i);
+    ax = nexttile;
     line_idx = lines_to_plot(i);
     original_ru = s_obs_ru(:, line_idx);
     reconstructed_ru_line = ru_reconstructed(:, line_idx);
-    
+
+    % --- FIX: Print errors to the command window ---
     [offset, error_abs] = calculate_validation_error(original_ru, reconstructed_ru_line);
-    extracted_legend_text = sprintf('Reconstructed (Offset=%.1e, Error=%.1e)', offset, error_abs);
-    plot(t_exp, original_ru - original_ru(1), 'b-', 'LineWidth', 4, 'DisplayName', 'Original');
-    hold on;
-    plot(t_exp, reconstructed_ru_line - reconstructed_ru_line(1), 'r--', 'LineWidth', 2, 'DisplayName', extracted_legend_text);
+    fprintf('RU Validation for Line %d: Abs. Error = %.2e (RU)\n', line_idx, error_abs);
+
+    % --- FIX: Use static legend text ---
+    plot(ax, t_exp, original_ru - original_ru(1), 'b-', 'LineWidth', line_width_thick, 'DisplayName', 'Original');
+    hold(ax, 'on');
+    plot(ax, t_exp, reconstructed_ru_line - reconstructed_ru_line(1), 'r--', 'LineWidth', line_width_thin, 'DisplayName', 'Reconstructed');
+    hold(ax, 'off');
+
+    grid(ax, 'on'); box(ax, 'on');
+    title(ax, sprintf('Line %d', line_idx), 'FontSize', base_font_size);
+    xlim(ax, [0, t_exp(end)]);
+    set(ax, 'FontSize', base_font_size - 1);
+    if i == 1, ylabel(ax, 'Response Units (RU)', 'FontSize', base_font_size); end
+end
+% --- FIX: Create a single, shared legend for the entire figure ---
+lgd = legend(ax);
+lgd.Layout.Tile = 'east';
+
+% title(t_c, 'Final Round-Trip Validation in Response Units', 'FontSize', base_font_size + 1);
+xlabel(t_c, 'Time (s)', 'FontSize', base_font_size);
+save_pub_fig(fig4c_pub, 'Adsorption/LineAverageModel/Figures/figure_4c_validation_ru_pub', target_fig_width_cm);
+close(fig4c_pub);
+
+
+%% --- FINAL COMPOSITE FIGURE: Uniting All Validation Plots (3x3 Grid) ---
+% =========================================================================
+% This section creates a new, single figure by stacking the three 1x3 
+% validation plots (Angle, RI, RU) vertically.
+% =========================================================================
+fprintf('\n\n--- Generating Final 3x3 Composite Validation Figure ---\n');
+
+% --- Define Publication Style Parameters ---
+% A 3x3 figure needs a wider format to be readable. 18cm is a common full-page width.
+target_fig_width_cm = 18;  
+base_font_size = 8;        
+line_width_thick = 1.2;    
+line_width_thin = 1.0;     
+lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
+
+% --- Create the master figure and 3x3 layout ---
+fig_summary = figure('Name', 'Comprehensive Validation Summary');
+t = tiledlayout(3, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+% =====================================================================
+% --- ROW 1: Angle Validation ---
+% =====================================================================
+for i = 1:length(lines_to_plot)
+    ax = nexttile;
+    line_idx = lines_to_plot(i);
+    original_angle = theta_spr_vs_time(:, line_idx);
+    extracted_angle = theta_extracted_from_frames(:, line_idx);
     
-    grid on; xlabel('Time (s)'); ylabel('Response Units (RU)');
-    title(sprintf('RU Validation for Line %d', line_idx));
-    legend('Location', 'best'); xlim([0, t_exp(end)]);
+    plot(ax, t_exp, original_angle - original_angle(1), 'b-', 'LineWidth', line_width_thick, 'DisplayName', 'Original');
+    hold(ax, 'on');
+    plot(ax, t_exp, extracted_angle - extracted_angle(1), 'r--', 'LineWidth', line_width_thin, 'DisplayName', 'Reconstructed');
+    hold(ax, 'off');
+    
+    grid(ax, 'on'); box(ax, 'on');
+    xlim(ax, [0, t_exp(end)]);
+    set(ax, 'FontSize', base_font_size - 1, 'XTickLabel', []); % Remove x-ticks from top row
+    
+    title(ax, sprintf('Line %d', line_idx), 'FontSize', base_font_size);
+    if i == 1, ylabel(ax, '\Delta Angle (deg)', 'FontSize', base_font_size); end
 end
-%sgtitle('Final Round-Trip Validation in Response Units', 'FontSize', 16);
-% --- Save full figure ---
-print(fig4c, 'Adsorption/LineAverageModel/Figures/figure_4c_validation_ru.png', '-dpng', '-r300');
-print(fig4c, 'Adsorption/LineAverageModel/Figures/EPS/figure_4c_validation_ru.eps', '-depsc');
-% --- Save individual subplots ---
-fprintf('Saving individual RU validation subplots as EPS files...\n');
-for k = 1:length(ax_handles_c)
-    line_idx = lines_to_plot(k);
-    filename = sprintf('%svalidation_ru_line_%d.eps', base_path, line_idx);
-    save_subplot_as_eps(ax_handles_c(k), filename);
+
+% =====================================================================
+% --- ROW 2: RI Validation ---
+% =====================================================================
+for i = 1:length(lines_to_plot)
+    ax = nexttile;
+    line_idx = lines_to_plot(i);
+    original_ri = n2_vs_time(:, line_idx);
+    reconstructed_ri = n2_reconstructed_vs_time(:, line_idx);
+
+    plot(ax, t_exp, original_ri - original_ri(1), 'b-', 'LineWidth', line_width_thick, 'DisplayName', 'Original');
+    hold(ax, 'on');
+    plot(ax, t_exp, reconstructed_ri - reconstructed_ri(1), 'r--', 'LineWidth', line_width_thin, 'DisplayName', 'Reconstructed');
+    hold(ax, 'off');
+    
+    grid(ax, 'on'); box(ax, 'on');
+    xlim(ax, [0, t_exp(end)]);
+    set(ax, 'FontSize', base_font_size - 1, 'XTickLabel', []); % Remove x-ticks from middle row
+    
+    if i == 1, ylabel(ax, '\DeltaRIU', 'FontSize', base_font_size); end
 end
-fprintf('Finished saving RU validation subplots.\n');
+
+% =====================================================================
+% --- ROW 3: RU Validation ---
+% =====================================================================
+for i = 1:length(lines_to_plot)
+    ax = nexttile;
+    line_idx = lines_to_plot(i);
+    original_ru = s_obs_ru(:, line_idx);
+    reconstructed_ru_line = ru_reconstructed(:, line_idx);
+
+    plot(ax, t_exp, original_ru - original_ru(1), 'b-', 'LineWidth', line_width_thick, 'DisplayName', 'Original');
+    hold(ax, 'on');
+    plot(ax, t_exp, reconstructed_ru_line - reconstructed_ru_line(1), 'r--', 'LineWidth', line_width_thin, 'DisplayName', 'Reconstructed');
+    hold(ax, 'off');
+
+    grid(ax, 'on'); box(ax, 'on');
+    xlim(ax, [0, t_exp(end)]);
+    set(ax, 'FontSize', base_font_size - 1); % Keep x-ticks on bottom row
+    
+    if i == 1, ylabel(ax, 'Response Units (RU)', 'FontSize', base_font_size); end
+end
+
+% --- Add Shared Legend and Labels ---
+lgd = legend(ax); % Create legend attached to the LAST axes handle
+lgd.Layout.Tile = 'South'; % Move the legend below all plots
+lgd.NumColumns = 2;        % Arrange legend items horizontally
+lgd.FontSize = base_font_size;
+
+% Add a single, shared X-axis label to the whole layout
+xlabel(t, 'Time (s)', 'FontSize', base_font_size + 1);
+
+% Add a main title for the entire figure
+% title(t, 'Comprehensive Round-Trip Validation', 'FontSize', base_font_size + 2, 'FontWeight', 'bold');
+
+% --- Save the Final Composite Figure ---
+save_pub_fig(fig_summary, 'Adsorption/LineAverageModel/Figures/figure_VALIDATION_summary_composite', target_fig_width_cm);
+close(fig_summary);
 % =========================================================================
 % --- FINAL PUBLICATION PLOT: ANNOTATED SENSORGRAM FIT ---
 % =========================================================================
 fprintf('\nGenerating annotated experiment plot for publication...\n');
-% --- Select data to plot (e.g., the first experiment and the middle line) ---
+
+% --- Define common plotting properties for publication ---
+target_fig_width_cm = 8.4; % IEEE single column width
+base_font_size = 8;        % Match your paper's caption font size (e.g., 8pt)
+line_width_fit = 1.5;      % Line width for the main fit
+line_width_anno = 0.8;     % Line width for annotation lines
+marker_size = 4;           % Size of the data markers
+
+% --- Select and calculate data ---
 exp_to_plot = 1;
 line_to_plot = round(ads_y_dim/2);
-% Get the relevant data from your previous calculations
 setting_to_plot = exp_settings(exp_to_plot);
 t_exp = exp_data{exp_to_plot}.time;
-% Get the noisy experimental data for the chosen line
 s_obs_noisy = exp_data{exp_to_plot}.signals(:, line_to_plot);
-% Reconstruct the final smooth fit from the optimized parameters
-% We need to run the model one last time with the final 'opt_params_1D'
 [~, s_final_fit_all_lines] = run_single_experiment_1D_model(opt_params_1D, setting_to_plot, model_config);
 s_final_fit = s_final_fit_all_lines(:, line_to_plot);
+
 % --- Create the Plot ---
-fig_annotated = figure('Name', 'Annotated Sensorgram Fit', 'Position', [100, 100, 1000, 600]);
-hold on;
-% Plot the noisy data and the final smooth fit
-plot(t_exp, s_obs_noisy, '.', 'Color', [0.6 0.6 1], 'DisplayName', 'Noisy Experimental Data'); % Light blue dots for data
-plot(t_exp, s_final_fit, 'r-', 'LineWidth', 2.5, 'DisplayName', 'Final Model Fit'); % Bold red line for fit
+fig_annotated_pub = figure('Name', 'Annotated Sensorgram Fit');
+ax = gca; % Get current axes
+hold(ax, 'on');
+
+% --- Plot the noisy data and the final smooth fit ---
+plot(ax, t_exp, s_obs_noisy, '.', 'Color', [0.6 0.6 1], 'MarkerSize', marker_size, 'DisplayName', 'Noisy Data');
+plot(ax, t_exp, s_final_fit, 'r-', 'LineWidth', line_width_fit, 'DisplayName', 'Model Fit');
+
 % --- Add vertical lines and text annotations for each phase ---
 y_lims = ylim; % Get current y-axis limits
-% Set text position to be 95% of the axis height (inside the plot)
-text_y_pos = y_lims(1) + 0.95 * (y_lims(2) - y_lims(1)); 
-% Get all time breaks and concentrations for annotation
+text_y_pos = y_lims(1) + 0.95 * (y_lims(2) - y_lims(1)); % Position text at 95% of y-axis
 all_t_breaks = [0, setting_to_plot.pulse_times, t_total];
 all_concs = [setting_to_plot.pulse_concs, c_diss];
+
 for i = 1:length(all_concs)
     t_start = all_t_breaks(i);
     t_end = all_t_breaks(i+1);
     
     % Draw vertical line at the start of the new phase
     if i > 1
-        line([t_start, t_start], y_lims, 'Color', [0.3 0.3 0.3], 'LineStyle', '--', 'LineWidth', 1, 'HandleVisibility', 'off');
+        line(ax, [t_start, t_start], y_lims, 'Color', [0.3 0.3 0.3], 'LineStyle', '--', 'LineWidth', line_width_anno, 'HandleVisibility', 'off');
     end
     
     % Add text annotation in the middle of the phase
     text_x_pos = (t_start + t_end) / 2;
-    text_str = sprintf('C = %.1e M', all_concs(i));
+    text_str = sprintf('C=%.1eM', all_concs(i)); % Shortened text
     
-    % Add a background to the text for better legibility
-    text(text_x_pos, text_y_pos, text_str, ...
+    text(ax, text_x_pos, text_y_pos, text_str, ...
         'HorizontalAlignment', 'center', ...
-        'FontSize', 12, ...
-        'FontWeight', 'bold', ...
-        'BackgroundColor', [1 1 1 0.7], ... % White, 70% opaque background
-        'Margin', 3); % Padding around text
+        'FontSize', base_font_size - 1, ... % Use a slightly smaller font for annotations
+        'FontWeight', 'normal', ...          % Normal weight is better for small fonts
+        'BackgroundColor', [1 1 1 0.7], ... 
+        'Margin', 2); % Smaller margin for smaller text
 end
+
 % --- Finalize Plot ---
-hold off;
-box on;
-grid on;
-axis tight; % Ensure plot fits data snugly
-% title(sprintf('Final Model Fit to Noisy Data for Line %d', line_to_plot));
-xlabel('Time (s)');
-ylabel('Response (RU)');
-legend('Location', 'southeast');
-% --- SAVE FIGURE ---
-print(fig_annotated, 'Adsorption/LineAverageModel/Figures/figure_6_annotated_fit.png', '-dpng', '-r300');
-print(fig_annotated, 'Adsorption/LineAverageModel/Figures/EPS/figure_6_annotated_fit.eps', '-depsc');
+hold(ax, 'off');
+box(ax, 'on');
+grid(ax, 'on');
+axis(ax, 'tight');
+%title(ax, sprintf('Model Fit for Line %d', line_to_plot), 'FontSize', base_font_size);
+xlabel(ax, 'Time (s)', 'FontSize', base_font_size);
+ylabel(ax, 'Response (RU)', 'FontSize', base_font_size);
+legend(ax, 'Location', 'southeast', 'FontSize', base_font_size - 1);
+set(ax, 'FontSize', base_font_size - 1);
+
+% --- SAVE THE FINAL FIGURE ---
+save_pub_fig(fig_annotated_pub, 'Adsorption/LineAverageModel/Figures/figure_6_annotated_fit_pub', target_fig_width_cm);
+close(fig_annotated_pub);
 
 
 

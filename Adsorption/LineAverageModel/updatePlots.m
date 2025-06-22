@@ -1,59 +1,73 @@
-function updatePlots(current_log_params, optimVals, h)
-    % Updates all diagnostic plots during optimization, with errors in the legend.
+function fig = updatePlots(current_log_params, optimVals, plot_data)
     
-    % --- Parameter Plotting Section (no changes here) ---
-    current_params_linear = 10.^current_log_params; ads_y_dim = h.ads_y_dim;
-    true_params = h.true_params_1D;
+    % --- Find the figure by its Tag. If it doesn't exist, create it. ---
+    figTag = 'OptimDashboardFigure';
+    fig = findobj('Type', 'figure', 'Tag', figTag);
+
+    if isempty(fig)
+        % This block runs only ONCE, during the 'init' phase
+        fig = figure('Name', '1D Optimization Progress & Diagnostics', ...
+                     'Units', 'centimeters', 'Position', [5, 5, 25, 15], ...
+                     'Tag', figTag, 'NumberTitle', 'off');
+
+        t = tiledlayout(3, 4, 'TileSpacing', 'compact', 'Padding', 'compact');
+        % Just create the tiles. We will find their handles later.
+        nexttile(1); nexttile(2); nexttile(3);
+        nexttile(5); nexttile(6); nexttile(7);
+        nexttile(9); nexttile(10); nexttile(11);
+        nexttile(4, [3, 1]); % The spanned Q-Q plot
+    end
+
+    % --- GET ALL AXES HANDLES (This runs EVERY time) ---
+    % By finding the handles every time, we ensure they are always valid.
+    all_axes = findobj(fig.Children, 'Type', 'Axes');
+    % Handles are returned in Last-In, First-Out order (reversed creation order)
+    ax_qq   = all_axes(1);
+    ax_res3 = all_axes(2); ax_res2 = all_axes(3); ax_res1 = all_axes(4);
+    ax_fit3 = all_axes(5); ax_fit2 = all_axes(6); ax_fit1 = all_axes(7);
+    ax_smax = all_axes(8); ax_koff = all_axes(9); ax_kon  = all_axes(10);
+
+    % --- Define Styles ---
+    font_size = 8; line_width = 1.2; marker_size = 4;
+
+    % --- Get static data from the plot_data struct ---
+    true_params = plot_data.true_params_1D;
+    ads_y_dim = plot_data.ads_y_dim;
+    
+    % --- Parameter Plotting Section ---
+    current_params_linear = 10.^current_log_params;
     true_kon = true_params(1:ads_y_dim); true_koff = true_params(ads_y_dim+1:2*ads_y_dim); true_smax = true_params(2*ads_y_dim+1:end);
     opt_kon = current_params_linear(1:ads_y_dim); opt_koff = current_params_linear(ads_y_dim+1:2*ads_y_dim); opt_smax = current_params_linear(2*ads_y_dim+1:end);
-    cla(h.ax_kon); plot(h.ax_kon, true_kon, 'ro-'); hold(h.ax_kon, 'on'); plot(h.ax_kon, opt_kon, 'g*-'); hold(h.ax_kon, 'off'); title(h.ax_kon, sprintf('k_{on} (Iter: %d)', optimVals.iteration)); legend(h.ax_kon,{'True','Current'},'Location','best'); grid(h.ax_kon,'on'); xlabel(h.ax_kon, 'Line Index');
-    cla(h.ax_koff); plot(h.ax_koff, true_koff, 'ro-'); hold(h.ax_koff, 'on'); plot(h.ax_koff, opt_koff, 'g*-'); hold(h.ax_koff, 'off'); title(h.ax_koff, sprintf('k_{off} (F-count: %d)', optimVals.funccount)); grid(h.ax_koff,'on'); xlabel(h.ax_koff, 'Line Index');
-    cla(h.ax_smax); plot(h.ax_smax, true_smax, 'ro-'); hold(h.ax_smax, 'on'); plot(h.ax_smax, opt_smax, 'g*-'); hold(h.ax_smax, 'off'); title(h.ax_smax, sprintf('s_{max} (Residual: %.2e)', optimVals.resnorm)); grid(h.ax_smax,'on'); xlabel(h.ax_smax, 'Line Index');
     
-    % --- Sensorgram and Residual Plotting Section ---
-    data_struct = h.exp_data{1}; t_exp = data_struct.time; exp_data_matrix = data_struct.signals;
-    
-    % The 'residual' from the optimizer is defined as (model - data)
-    residual_total = optimVals.residual(1:numel(exp_data_matrix));
-    residual_matrix = reshape(residual_total, size(exp_data_matrix));
-    
-    % --- THE FIX IS HERE: Change minus to plus ---
-    % To get the smooth model fit, we do: model = data + (model - data)
-    s_sim_matrix = exp_data_matrix + residual_matrix;
-    
-    % --- The rest of the function continues as before ---
-    lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
-    ax_fits = [h.ax_fit1, h.ax_fit2, h.ax_fit3]; ax_ress = [h.ax_res1, h.ax_res2, h.ax_res3];
-    
-    for i = 1:length(lines_to_plot)
-        line_idx = lines_to_plot(i); ax_fit = ax_fits(i); ax_res = ax_ress(i);
+    cla(ax_kon); plot(ax_kon, true_kon, 'ro-'); hold(ax_kon, 'on'); plot(ax_kon, opt_kon, 'g*-'); hold(ax_kon, 'off'); title(ax_kon, sprintf('k_{on} (Iter: %d)', optimVals.iteration)); legend(ax_kon,{'True','Current'},'Location','best'); grid(ax_kon,'on'); xlabel(ax_kon, 'Line Index'); set(ax_kon, 'FontSize', font_size-1);
+    cla(ax_koff); plot(ax_koff, true_koff, 'ro-'); hold(ax_koff, 'on'); plot(ax_koff, opt_koff, 'g*-'); hold(ax_koff, 'off'); title(ax_koff, sprintf('k_{off} (F-count: %d)', optimVals.funccount)); grid(ax_koff,'on'); xlabel(ax_koff, 'Line Index'); set(ax_koff, 'FontSize', font_size-1);
+    cla(ax_smax); plot(ax_smax, true_smax, 'ro-'); hold(ax_smax, 'on'); plot(ax_smax, opt_smax, 'g*-'); hold(ax_smax, 'off'); title(ax_smax, sprintf('s_{max} (Res: %.1e)', optimVals.resnorm)); grid(ax_smax,'on'); xlabel(ax_smax, 'Line Index'); set(ax_smax, 'FontSize', font_size-1);
+
+    % The 'residual' field may not exist on the very first call. Check for it.
+    if isfield(optimVals, 'residual') && ~isempty(optimVals.residual)
+        % --- Sensorgram and Residual Plotting Section ---
+        data_struct = plot_data.exp_data{1}; t_exp = data_struct.time; exp_data_matrix = data_struct.signals;
+        residual_total = optimVals.residual(1:numel(exp_data_matrix));
+        residual_matrix = reshape(residual_total, size(exp_data_matrix));
+        s_sim_matrix = exp_data_matrix + residual_matrix;
+        lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
+        ax_fits = [ax_fit1, ax_fit2, ax_fit3]; 
+        ax_ress = [ax_res1, ax_res2, ax_res3];
         
-        % Calculate error metrics for the current line's fit
-        [~, error_abs] = calculate_validation_error(exp_data_matrix(:, line_idx), s_sim_matrix(:, line_idx));
-        fit_legend_text = sprintf('Fit, E_A=%.1e', error_abs);
+        for i = 1:length(lines_to_plot)
+            line_idx = lines_to_plot(i); ax_fit = ax_fits(i); ax_res = ax_ress(i);
+            
+            cla(ax_fit); plot(ax_fit, t_exp, exp_data_matrix(:, line_idx), 'b-'); hold(ax_fit, 'on'); plot(ax_fit, t_exp, s_sim_matrix(:, line_idx), 'r--'); hold(ax_fit, 'off');
+            title(ax_fit, sprintf('Fit (Line %d)', line_idx)); ylabel(ax_fit, 'Response (RU)'); grid(ax_fit, 'on'); set(ax_fit, 'XTickLabel', []); set(ax_fit, 'FontSize', font_size-1);
+
+            cla(ax_res); plot(ax_res, t_exp, residual_matrix(:, line_idx), 'k.', 'MarkerSize', marker_size); hold(ax_res, 'on'); yline(ax_res, 0, 'r--'); hold(ax_res, 'off');
+            title(ax_res, 'Residuals'); xlabel(ax_res, 'Time (s)'); ylabel(ax_res, 'Error'); grid(ax_res, 'on'); xlim(ax_res, [0, t_exp(end)]); set(ax_res, 'FontSize', font_size-1);
+        end
         
-        % Plot the Fit
-        cla(ax_fit);
-        plot(ax_fit, t_exp, exp_data_matrix(:, line_idx), 'b-', 'DisplayName', 'Data');
-        hold(ax_fit, 'on');
-        plot(ax_fit, t_exp, s_sim_matrix(:, line_idx), 'r--', 'DisplayName', fit_legend_text);
-        hold(ax_fit, 'off');
-        title(ax_fit, sprintf('Sensorgram Fit for Line %d', line_idx));
-        ylabel(ax_fit, 'Response (RU)');
-        legend(ax_fit, 'Location', 'best'); grid(ax_fit, 'on'); set(ax_fit, 'XTickLabel', []);
-        
-        % Plot the Residuals
-        cla(ax_res);
-        plot(ax_res, t_exp, residual_matrix(:, line_idx), 'k.', 'MarkerSize', 4);
-        hold(ax_res, 'on');
-        yline(ax_res, 0, 'r--', 'LineWidth', 1);
-        hold(ax_res, 'off');
-        title(ax_res, 'Residual (Data - Fit)'); xlabel(ax_res, 'Time (s)'); ylabel(ax_res, 'Error'); grid(ax_res, 'on'); xlim(ax_res, [0, t_exp(end)]);
+        % --- Q-Q Plot Section ---
+        cla(ax_qq); qqplot(ax_qq, residual_total);
+        title(ax_qq, 'Q-Q Plot of Residuals'); xlabel(ax_qq, 'Std. Normal Quantiles'); ylabel(ax_qq, 'Residual Quantiles'); grid(ax_qq, 'on'); set(ax_qq, 'FontSize', font_size-1);
     end
-    
-    % --- Q-Q Plot Section ---
-    cla(h.ax_qq); qqplot(h.ax_qq, residual_total);
-    title(h.ax_qq, 'Q-Q Plot of Residuals'); xlabel(h.ax_qq, 'Standard Normal Quantiles'); ylabel(h.ax_qq, 'Residual Quantiles'); grid(h.ax_qq, 'on');
-    
-    drawnow;
+
+    drawnow; % Force the figure to update in the event loop
 end
