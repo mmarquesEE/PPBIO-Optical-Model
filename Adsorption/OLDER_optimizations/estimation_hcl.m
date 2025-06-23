@@ -1,6 +1,6 @@
 % Step 2: Define directory containing Excel files
 clear all; close all; clc;
-dir_path = 'C:\REPOS\PPBIO-Optical-Model\Data_HCL\data_excel';
+dir_path = 'C:\REPOS\PPBIO-Optical-Model\Adsorption\EXP_DATA\Data_HCL\data_excel';
 % Step 3: Initialize struct to store data
 data_dict = struct();
 

@@ -106,10 +106,10 @@ function plot_final_2D_results_full(p_true_2D, opt_log_params, p_init, resnorm, 
     
     % --- FIX: Add iteration count to the main title ---
     num_iter = output.iterations;
-    main_title_str = sprintf('Comprehensive Post-Optimization Results (Iterations: %d)', num_iter);
+%     main_title_str = sprintf('Comprehensive Post-Optimization Results (Iterations: %d)', num_iter);
 %     title(t, main_title_str, 'FontSize', base_font_size+2, 'FontWeight', 'bold');
     
     % --- Save the Final Figure ---
-    save_pub_fig(fig, 'FullHeterogeneousAnalysis/Figures/figure_final_summary_full', target_fig_width_cm);
+    save_pub_fig(fig, 'FullHeterogeneousAnalysis/Figures/figure_final_summary_full_reg', target_fig_width_cm);
     close(fig);
 end

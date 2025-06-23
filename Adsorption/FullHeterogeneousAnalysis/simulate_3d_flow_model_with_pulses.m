@@ -9,7 +9,7 @@ function [t_all, c_s, s] = simulate_3d_flow_model_with_pulses(...
     y0 = [c_s0(:); s0(:)];
     
     % Setup ODE options
-    options = odeset('RelTol', 1e-10, 'AbsTol', 1e-12);
+    options = odeset('RelTol', 1e-6, 'AbsTol', 1e-6);
     
     % --- START: PREALLOCATION LOGIC ---
     
