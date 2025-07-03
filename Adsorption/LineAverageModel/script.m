@@ -1037,4 +1037,20 @@ save_pub_fig(fig_annotated_pub, 'Adsorption/LineAverageModel/Figures/figure_6_an
 close(fig_annotated_pub);
 
 
-
+% 
+% --- Angle Validation Results ---
+% Angle Validation for Line 1: Abs. Error = 5.21e-03 (deg)
+% Angle Validation for Line 3: Abs. Error = 5.39e-03 (deg)
+% Angle Validation for Line 5: Abs. Error = 5.31e-03 (deg)
+% Saved figure to Adsorption/LineAverageModel/Figures/figure_4a_validation_angle_pub.pdf and Adsorption/LineAverageModel/Figures/figure_4a_validation_angle_pub.eps
+% 
+% --- Refractive Index Validation Results ---
+% RI Validation for Line 1: Abs. Error = 3.80e-05 (RIU)
+% RI Validation for Line 3: Abs. Error = 4.16e-05 (RIU)
+% RI Validation for Line 5: Abs. Error = 4.25e-05 (RIU)
+% Saved figure to Adsorption/LineAverageModel/Figures/figure_4b_validation_ri_pub.pdf and Adsorption/LineAverageModel/Figures/figure_4b_validation_ri_pub.eps
+% 
+% --- Response Unit Validation Results ---
+% RU Validation for Line 1: Abs. Error = 3.80e+01 (RU)
+% RU Validation for Line 3: Abs. Error = 4.16e+01 (RU)
+% RU Validation for Line 5: Abs. Error = 4.25e+01 (RU)

@@ -23,8 +23,8 @@ function stop = optimPlotter_1D(log_params, optimValues, state, true_params_1D, 
         case 'done'
             if ishandle(fig_handle)
                 % On the final call, save the figure
-                save_pub_fig(fig_handle, 'Adsorption/LineAverageModel/Figures/figure_fit_diagnostics_FULL', 18);
-                fprintf('Full diagnostic plot saved for supplementary materials.\n');
+                %save_pub_fig(fig_handle, 'Adsorption/LineAverageModel/Figures/figure_fit_diagnostics_FULL', 18);
+                %fprintf('Full diagnostic plot saved for supplementary materials.\n');
             end
     end
     stop = false; % Default to not stopping the optimization
