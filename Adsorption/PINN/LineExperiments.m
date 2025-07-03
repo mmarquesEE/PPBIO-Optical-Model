@@ -1,0 +1,757 @@
+function LineExperiments()
+    clearvars; close all; clc;
+    % Shared parameters
+    gridN_x = 15; gridN_y = 10; gridN_z = 3;
+    ads_layer = 1;
+    ads_x_range = [3,11]; ads_y_range = [2,8];
+
+    % --- MODIFIED --- Get number of lines in adsorption region
+    ads_y_dim = ads_y_range(2) - ads_y_range(1) + 1;
+
+    % Homogeneous parameters
+    homog_params = [9.4e3, 0.0078, 1.0]; % kon, koff, smax_total
+    
+    % Fixed parameters
+    D_coeff = 6e-3;
+    ru_to_m = 1e-6;
+    base_max_velocity = 8.3;
+    
+    % Example pulse parameters
+    n_exp = 1;
+    T1 = 2200; T2 = 2*T1; T3 = 3*T1;
+    t_total = 4*T1;
+    c_diss = 0;
+    c1 = 3.3e-6;
+    c2 = 1e-6;
+    exp_settings = generate_experiments(n_exp, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2);
+    model_config.gridN_x = gridN_x;
+    model_config.gridN_y = gridN_y;
+    model_config.gridN_z = gridN_z;
+    model_config.ads_x_range = ads_x_range;
+    model_config.ads_y_range = ads_y_range;
+    model_config.ads_layer = ads_layer;
+    model_config.D_coeff = D_coeff;
+    model_config.ru_to_m = ru_to_m;
+    % Create ground truth 2D heterogeneous parameters
+    [kon_grid_heterog, koff_grid_heterog, smax_grid_heterog] = ...
+        create_ground_truth_heterogeneity(gridN_x, gridN_y, gridN_z, ads_x_range, ads_y_range, ads_layer);
+    % =========================================================================
+    % --- STEP 1: GENERATE "EXPERIMENTAL" DATA FIRST ---
+    % By creating this data upfront, we know the exact size of all outputs
+    % and can reuse the clean data later.
+    % =========================================================================
+    fprintf('\nGenerating ground-truth data for all experiments...\n');
+    tic;
+    exp_data = cell(n_exp, 1);
+    total_rows = 0;
+    for exp_idx = 1:n_exp
+        setting = exp_settings(exp_idx);
+        velocity_profile = create_velocity_profile(gridN_z, setting.max_velocity);
+        t_breaks = [0, setting.pulse_times, setting.t_total];
+        concentrations = [setting.pulse_concs, setting.c_diss];
+        s0_grid = zeros(gridN_x, gridN_y, gridN_z);
+        
+        [t_exp, ~, s_heterog_exp] = simulate_3d_flow_model_with_pulses(...
+            gridN_x, gridN_y, gridN_z, kon_grid_heterog, koff_grid_heterog, smax_grid_heterog, ...
+            velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid);
+        
+        s_obs_by_line_clean = compute_s_obs_by_line(s_heterog_exp, ads_x_range, ads_y_range, ads_layer);
+        
+        noise_level = 0.02;
+        noise_matrix = 1 + noise_level * randn(size(s_obs_by_line_clean));
+        
+        data_struct.time = t_exp;
+        data_struct.signals_clean = s_obs_by_line_clean; % Store the clean version
+        data_struct.signals = s_obs_by_line_clean .* noise_matrix; % And the noisy version
+        exp_data{exp_idx} = data_struct;
+        %Plotting
+        t_plot = exp_data{exp_idx}.time;
+        s_plot_by_line = exp_data{exp_idx}.signals_clean; % Plot the clean data
+        s_plot_global = sum(s_plot_by_line, 2);
+        
+        figure('Position', [100, 100, 1200, 600]);
+        subplot(1,2,1);
+        plot(t_plot, s_plot_global, 'r-', 'LineWidth', 2);
+        title('Global (Summed) Sensorgram'); xlabel('Time (s)'); ylabel('Total s_{obs}(t)'); grid on;
+        
+        subplot(1,2,2);
+        plot(t_plot, s_plot_by_line, 'LineWidth', 1.5);
+        title('Line-by-Line Sensorgrams (1D Heterogeneity)'); xlabel('Time (s)'); ylabel('s_{obs, j}(t)');
+        legend(arrayfun(@(j) sprintf('Line %d', j), 1:ads_y_dim, 'UniformOutput', false), 'Location', 'best'); grid on;
+        sgtitle(sprintf('Experiment %d: Ground Truth Data', exp_idx));
+        % 1. Calculate total rows by summing up data points from all experiments
+        total_rows = total_rows + numel(exp_data{exp_idx}.signals_clean);
+    end
+    fprintf('Data generation complete.\n');    
+    toc;
+    % ============== IDENTIFIABILITY ANALYSIS (1D HETEROGENEITY) ================
+    fprintf('\nStarting 1D Identifiability Analysis...\n');
+    
+    % --- MODIFIED --- Create the "true" 1D parameter vector
+    % We assume the true line parameter is the average over the flow direction
+    kon_ads_2D = kon_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    koff_ads_2D = koff_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    smax_ads_2D = smax_grid_heterog(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+
+    % Average parameters along the x-axis (flow direction) to get line parameters
+    p_true_kon_1D = mean(kon_ads_2D, 1)';   % [ads_y_dim x 1]
+    p_true_koff_1D = mean(koff_ads_2D, 1)'; % [ads_y_dim x 1]
+    p_true_smax_1D = mean(smax_ads_2D, 1)'; % [ads_y_dim x 1]
+    
+    p_true_1D = [p_true_kon_1D; p_true_koff_1D; p_true_smax_1D];
+    N_params_1D = length(p_true_1D);
+    
+    % --- START: PREALLOCATION FOR JACOBIAN ---
+    tic;
+    % 2. Preallocate the combined Jacobian matrix
+    J_combined = zeros(total_rows, N_params_1D);
+    
+    % 3. Initialize a row indexer
+    current_row_start = 1;
+    
+    % --- END: PREALLOCATION FOR JACOBIAN ---
+    
+    % Loop to compute and fill the Jacobian
+    for exp_idx = 1:n_exp
+        setting = exp_settings(exp_idx);
+        fprintf('Computing Jacobian for Experiment %d (1D model)...\n', exp_idx);
+        
+        % REUSE baseline output from the data we already generated. No need to re-run.
+        s_obs_matrix = exp_data{exp_idx}.signals_clean;
+        s_obs_vector = s_obs_matrix(:); % Vectorize for Jacobian
+        
+        n_rows_exp = length(s_obs_vector);
+        J_exp = zeros(n_rows_exp, N_params_1D);
+        h = 1e-5;
+        
+        parfor k = 1:N_params_1D
+            p_pert = p_true_1D;
+            p_pert(k) = p_pert(k) * (1 + h);
+            
+            % We only need to run the perturbed simulation here
+            [~, s_pert_matrix] = run_single_experiment_1D_model(p_pert, setting, model_config);
+            s_pert_vector = s_pert_matrix(:);
+            
+            J_exp(:, k) = (s_pert_vector - s_obs_vector) / (p_true_1D(k) * h);
+        end
+        
+        % --- Fill the preallocated matrix ---
+        row_range = current_row_start : (current_row_start + n_rows_exp - 1);
+        J_combined(row_range, :) = J_exp;
+        current_row_start = current_row_start + n_rows_exp;
+    end
+    toc;
+    % ================= START OF SVD ANALYSIS =================
+
+    rankJ = rank(J_combined);
+    fprintf('\n1D Identifiability Analysis Results:\n');
+    fprintf('Total Parameters (3 * N_y): %d\n', N_params_1D);
+    fprintf('Rank of Combined Jacobian: %d\n', rankJ);
+    
+    if rankJ < N_params_1D
+        fprintf('WARNING: The model is structurally unidentifiable. Rank < Number of Parameters.\n');
+    else
+        fprintf('SUCCESS: The model appears to be structurally identifiable (Jacobian has full rank).\n');
+    end
+    fprintf('Now performing SVD analysis to investigate practical identifiability...\n');
+    
+    % --- Step 1: Perform Singular Value Decomposition ---
+    % Use the 'econ' flag for efficiency, as we only need the first N_params_1D vectors
+    [~, S, V] = svd(J_combined, 'econ');
+    
+    % Extract the diagonal singular values
+    singular_values = diag(S);
+    
+    % --- Step 2: Analyze and Plot Singular Values ---
+    figure('Name', 'SVD Analysis of Jacobian', 'Position', [100, 100, 1400, 600]);
+    
+    subplot(1, 2, 1);
+    semilogy(singular_values, 'o-', 'LineWidth', 2, 'MarkerSize', 8);
+    grid on;
+    title('Singular Values of the Jacobian');
+    xlabel('Singular Value Index');
+    ylabel('Magnitude (log scale)');
+    xlim([0, N_params_1D + 1]);
+    % Add text for the condition number
+    cond_number = singular_values(1) / singular_values(end);
+    legend(sprintf('Condition Number: %.2e', cond_number));
+    
+    % --- Step 3: Analyze and Plot Parameter Combinations (Right Singular Vectors) ---
+    subplot(1, 2, 2);
+    imagesc(abs(V)); % Use absolute value for clarity of magnitude
+    colorbar;
+    title('Parameter Contributions to Singular Vectors (V)');
+    xlabel('Singular Vector Index (1=Most Identifiable -> N=Least Identifiable)');
+    ylabel('Parameter Index');
+    
+    % Create meaningful labels for the y-axis
+    param_labels = [arrayfun(@(i) sprintf('kon_{%d}', i), 1:ads_y_dim, 'UniformOutput', false), ...
+                    arrayfun(@(i) sprintf('koff_{%d}', i), 1:ads_y_dim, 'UniformOutput', false), ...
+                    arrayfun(@(i) sprintf('smax_{%d}', i), 1:ads_y_dim, 'UniformOutput', false)];
+    yticks(1:N_params_1D);
+    yticklabels(param_labels);
+    
+    sgtitle('SVD-based Identifiability Analysis', 'FontSize', 16, 'FontWeight', 'bold');
+    
+    % ================= END OF SVD ANALYSIS =================
+
+   % ============== PARAMETER IDENTIFICATION (1D HETEROGENEITY) ================    
+    fprintf('\nStarting 1D Parameter Identification...\n');
+    
+    % --- MODIFIED --- Setup initial guess and bounds for 1D model
+    homog_kon = homog_params(1);
+    homog_koff = homog_params(2);
+    homog_smax_per_line = (homog_params(3) / ads_y_dim); % Evenly distributed total smax
+    
+    p0_base_kon = log10(homog_kon) * ones(ads_y_dim, 1);
+    p0_base_koff = log10(homog_koff) * ones(ads_y_dim, 1);
+    p0_base_smax = log10(homog_smax_per_line) * ones(ads_y_dim, 1);
+    
+    p0_base = [p0_base_kon; p0_base_koff; p0_base_smax];
+    
+        % Define TIGHT bounds in log10 space to keep the optimizer in a stable region.
+    % These correspond to kon=[1e2, 1e7], koff=[1e-5, 1], smax_per_line=[1e-4, 5]
+    lb_kon = log10(1e3);  ub_kon = log10(1e7);
+    lb_koff = log10(1e-6); ub_koff = log10(1e-1); 
+    lb_smax = log10(1e-4); ub_smax = log10(2);   
+    
+    lb = [repmat(lb_kon, ads_y_dim, 1); ...
+          repmat(lb_koff, ads_y_dim, 1); ...
+          repmat(lb_smax, ads_y_dim, 1)];
+    ub = [repmat(ub_kon, ads_y_dim, 1); ...
+          repmat(ub_koff, ads_y_dim, 1); ...
+          repmat(ub_smax, ads_y_dim, 1)];
+    % 3. Create the final p0 by adding a small random perturbation AND clamping to the bounds
+    rng('default'); % For reproducible randomness
+    noise_level = 0.1; % Small perturbation (e.g., 0.1 standard deviations in log space)
+    p0_rand = p0_base + noise_level * randn(size(p0_base));
+    
+    % Clamp the randomized p0 to be within the bounds
+    p0 = max(lb, p0_rand); % Enforce lower bound
+    p0 = min(ub, p0);     % Enforce upper bound
+    % --- NEW --- Create a handle to the plotter function with all necessary data
+    optim_plot_fun = @(log_p, optim_v, state) optimPlotter_1D(...
+        log_p, optim_v, state, ...
+        p_true_1D, exp_data, exp_settings, model_config, ads_y_dim);
+
+    % --- MODIFIED --- Add the 'OutputFcn' to your optimization options
+    optim_opts = optimoptions('lsqnonlin', ...
+        'Algorithm', 'trust-region-reflective', ...
+        'Display', 'iter', ...
+        'MaxIterations', 50, ...
+        'UseParallel', true, ...
+        'FunctionTolerance', 1e-8, ...
+        'StepTolerance', 1e-8, ...
+        'OutputFcn', optim_plot_fun); % This tells lsqnonlin to call our plotter
+        
+    % --- MODIFIED --- The residual function remains the same
+    residual_fun = @(log_params) compute_residuals_1D_model(log_params, exp_settings, exp_data, model_config);
+    tic;
+    % Run optimization
+    [opt_log_params, ~] = lsqnonlin(residual_fun, p0, lb, ub, optim_opts);
+    toc;
+    % --- MODIFIED --- Analyze and plot results for 1D model
+    opt_params_1D = 10.^opt_log_params;
+    
+    % Plot recovery of the 1D parameters
+    plot_parameter_recovery_1D(p_true_1D, opt_params_1D, 10.^p0, ads_y_dim);
+end
+function s_obs_matrix = compute_s_obs_by_line(s_grid, ads_x_range, ads_y_range, ads_layer)
+% Computes a matrix of sensorgrams, one for each line in the y-direction.
+% Output size: [n_time_points x n_y_lines]
+    ads_cells = s_grid(:, ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer);
+    % Sum over the x-dimension (dim 2) and the z-dimension (dim 4, which is singleton)
+    s_obs_matrix = squeeze(sum(ads_cells, [2, 4]));
+end
+function exp_settings = generate_experiments(M, base_max_velocity, T1, T2, T3, t_total, c_diss, c1, c2)
+    % Generates M experiments with orthogonal concentration profiles and flow velocities
+    %
+    % Inputs:
+    %   M - Number of experiments
+    %   base_max_velocity - Reference flow velocity (e.g., 8.3)
+    %   T1, T2, T3 - Fixed pulse times
+    %   t_total - Total experiment duration
+    %   c_diss - Dissociation concentration
+    %   c1, c2 - Base concentrations
+    
+    exp_settings = struct(...
+        'pulse_times', {}, ...
+        'pulse_concs', {}, ...
+        't_total', {}, ...
+        'max_velocity', {}, ...
+        'c_diss', {} ...
+    );
+    
+    % Generate orthogonal concentration pairs using polar coordinates
+    angles = linspace(0, pi/2, M);  % Cover quadrant for positive concentrations
+    factors = linspace(0.3, 3, M);  % Concentration scaling factors
+    
+    for i = 1:M
+        if M ==1
+            M=2;
+        end
+        % Create orthogonal concentration profiles
+        conc_factor1 = factors(ceil(i/2)) * cos(angles(i));
+        conc_factor2 = factors(ceil(i/2)) * sin(angles(i));
+        
+        % Ensure minimum concentration variation
+        min_conc = 0.1 * min(c1, c2);
+        conc1 = max(c1 * (0.5 + conc_factor1), min_conc);
+        conc3 = max(c2 * (0.5 + conc_factor2), min_conc);
+        
+        % Create velocity profile (logarithmic spacing)
+        vel_min = 0.1 * base_max_velocity;
+        vel_max = 5.0 * base_max_velocity;
+        velocity = exp(log(vel_min) + (i-1)/(M-1) * (log(vel_max) - log(vel_min)));
+        
+        % Special patterns for every 3rd experiment
+        if mod(i,3) == 0
+            exp_settings(i).pulse_concs = [conc1, c2, conc3];  % Middle pulse active
+        elseif mod(i,4) == 0
+            exp_settings(i).pulse_concs = [c1, 0, conc3];      % First pulse fixed
+        else
+            exp_settings(i).pulse_concs = [conc1, 0, conc3];   % Standard pattern
+        end
+        
+        % Assign common parameters
+        exp_settings(i).pulse_times = [T1, T2, T3];
+        exp_settings(i).t_total = t_total;
+        exp_settings(i).max_velocity = velocity;
+        exp_settings(i).c_diss = c_diss;
+    end
+end
+% ================== NEW HELPER FUNCTIONS ==================
+% --- Modified compute_residuals_log function ---
+function all_residuals = compute_residuals_1D_model(log_params, exp_settings, exp_data, model_config)
+% Computes residuals and includes robust error handling for simulation failures.
+% This version is optimized to preallocate the results vector for performance.
+
+    p_1D = 10.^log_params;
+
+    % --- START: PREALLOCATION LOGIC ---
+
+    % 1. First, calculate the total number of residual points across all experiments.
+    total_num_residuals = 0;
+    for exp_idx = 1:length(exp_settings)
+        % numel() gets the total number of elements in the data matrix
+        total_num_residuals = total_num_residuals + numel(exp_data{exp_idx}.signals);
+    end
+    
+    % 2. Preallocate the full residuals vector with zeros.
+    all_residuals = zeros(total_num_residuals, 1);
+    
+    % 3. Initialize an index to track our position in all_residuals.
+    current_idx_start = 1;
+
+    % --- END: PREALLOCATION LOGIC ---
+
+
+    % --- Part 2: Model-Data Residuals with Error Handling ---
+    for exp_idx = 1:length(exp_settings)
+        setting = exp_settings(exp_idx);
+        s_data_matrix = exp_data{exp_idx}.signals;
+        
+        try
+            [~, s_sim_matrix] = run_single_experiment_1D_model(p_1D, setting, model_config);
+            if ~isequal(size(s_sim_matrix), size(s_data_matrix))
+                error('Simulation output size mismatch.');
+            end
+            res_matrix = s_sim_matrix - s_data_matrix;
+        catch ME
+            fprintf('Warning: Simulation failed. Penalizing parameter set. Error: %s\n', ME.message);
+            
+            penalty_value = 1e6 * (1 + norm(s_data_matrix(:)));
+            res_matrix = penalty_value * ones(size(s_data_matrix));
+        end
+        
+        % --- START: MODIFIED RESULT HANDLING ---
+        
+        % Calculate the number of elements for this specific experiment
+        num_res_in_exp = numel(res_matrix);
+        
+        % Define the range in the preallocated vector to fill
+        idx_range = current_idx_start : (current_idx_start + num_res_in_exp - 1);
+        
+        % Place the current residuals into the correct slice, ensuring it's a column
+        all_residuals(idx_range) = res_matrix(:);
+        
+        % Update the starting index for the next iteration
+        current_idx_start = current_idx_start + num_res_in_exp;
+        
+        % --- END: MODIFIED RESULT HANDLING ---
+    end
+end
+
+
+% ================== EXISTING HELPER FUNCTIONS ==================
+function [t, s_obs_by_line] = run_single_experiment_1D_model(p_1D, setting, model_config)
+% Runs a simulation using the 1D heterogeneous parameter model.
+    ads_y_dim = model_config.ads_y_range(2) - model_config.ads_y_range(1) + 1;
+    ads_x_dim = model_config.ads_x_range(2) - model_config.ads_x_range(1) + 1;
+
+    % Unpack 1D parameter vector
+    kon_1D  = p_1D(1:ads_y_dim);
+    koff_1D = p_1D(ads_y_dim+1 : 2*ads_y_dim);
+    smax_1D = p_1D(2*ads_y_dim+1 : 3*ads_y_dim);
+
+    % Create 2D parameter grids by replicating parameters along the x-axis
+    kon_ads  = repmat(kon_1D', ads_x_dim, 1);
+    koff_ads = repmat(koff_1D', ads_x_dim, 1);
+    smax_ads = repmat(smax_1D', ads_x_dim, 1);
+    
+    % Create full 3D parameter grids
+    [kon_grid, koff_grid, smax_grid] = create_heterogeneous_grids_from_ads(...
+        model_config.gridN_x, model_config.gridN_y, model_config.gridN_z, ...
+        model_config.ads_x_range, model_config.ads_y_range, model_config.ads_layer, ...
+        kon_ads, koff_ads, smax_ads);
+
+    % Create velocity, time, and concentration profiles
+    velocity_profile = create_velocity_profile(model_config.gridN_z, setting.max_velocity);
+    t_breaks = [0, setting.pulse_times, setting.t_total];
+    concentrations = [setting.pulse_concs, setting.c_diss];
+    s0_grid = zeros(model_config.gridN_x, model_config.gridN_y, model_config.gridN_z);
+
+    % Run simulation
+    [t, ~, s] = simulate_3d_flow_model_with_pulses(...
+        model_config.gridN_x, model_config.gridN_y, model_config.gridN_z, ...
+        kon_grid, koff_grid, smax_grid, velocity_profile, ...
+        t_breaks, concentrations, model_config.D_coeff, model_config.ru_to_m, s0_grid);
+    
+    % Compute the per-line observed signal
+    s_obs_by_line = compute_s_obs_by_line(s, model_config.ads_x_range, ...
+        model_config.ads_y_range, model_config.ads_layer);
+end
+
+function plot_parameter_recovery_1D(p_true, p_opt, p_init, ads_y_dim)
+    
+    % Extract parameter groups
+    true_kon = p_true(1:ads_y_dim);
+    true_koff = p_true(ads_y_dim+1:2*ads_y_dim);
+    true_smax = p_true(2*ads_y_dim+1:end);
+    
+    opt_kon = p_opt(1:ads_y_dim);
+    opt_koff = p_opt(ads_y_dim+1:2*ads_y_dim);
+    opt_smax = p_opt(2*ads_y_dim+1:end);
+
+    init_kon = p_init(1:ads_y_dim);
+    init_koff = p_init(ads_y_dim+1:2*ads_y_dim);
+    init_smax = p_init(2*ads_y_dim+1:end);
+    
+    figure('Position', [100, 100, 800, 900]);
+    
+    % Plot kon recovery
+    subplot(3,1,1);
+    plot(true_kon, 'ro-', 'MarkerSize', 8, 'LineWidth', 2); hold on;
+    plot(init_kon, 'bx--', 'MarkerSize', 8, 'LineWidth', 1.5);
+    plot(opt_kon, 'g*-', 'MarkerSize', 8, 'LineWidth', 1.5);
+    title('Line-by-Line Binding Rate (k_{on}) Recovery');
+    legend('True (Line Avg)', 'Initial Guess', 'Recovered');
+    ylabel('Value'); xlabel('Line Index (j)');
+    grid on;
+
+    % Plot koff recovery
+    subplot(3,1,2);
+    plot(true_koff, 'ro-', 'MarkerSize', 8, 'LineWidth', 2); hold on;
+    plot(init_koff, 'bx--', 'MarkerSize', 8, 'LineWidth', 1.5);
+    plot(opt_koff, 'g*-', 'MarkerSize', 8, 'LineWidth', 1.5);
+    title('Line-by-Line Unbinding Rate (k_{off}) Recovery');
+    ylabel('Value'); xlabel('Line Index (j)');
+    grid on;
+    
+    % Plot smax recovery
+    subplot(3,1,3);
+    plot(true_smax, 'ro-', 'MarkerSize', 8, 'LineWidth', 2); hold on;
+    plot(init_smax, 'bx--', 'MarkerSize', 8, 'LineWidth' ,1.5);
+    plot(opt_smax, 'g*-', 'MarkerSize', 8, 'LineWidth', 1.5);
+    title('Line-by-Line Maximum Binding (s_{max}) Recovery');
+    ylabel('Value'); xlabel('Line Index (j)');
+    grid on;
+    
+    sgtitle('Parameter Recovery Results for 1D Heterogeneous Model');
+end
+
+function [kon_grid, koff_grid, smax_grid] = create_heterogeneous_grids_from_ads(...
+    nx, ny, nz, ads_x_range, ads_y_range, ads_layer, kon_ads, koff_ads, smax_ads)
+    
+    kon_grid = zeros(nx, ny, nz);
+    koff_grid = zeros(nx, ny, nz);
+    smax_grid = zeros(nx, ny, nz);
+    
+    kon_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = kon_ads;
+    koff_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = koff_ads;
+    smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = smax_ads;
+end
+
+function velocity_profile = create_velocity_profile(nz, max_velocity)
+    z_indices = 0:(nz-1);
+    h = nz-1;
+    velocity_profile = 4 * max_velocity * (z_indices/h) .* (1 - z_indices/h);
+    velocity_profile = reshape(velocity_profile, [1,1,nz]);
+end
+
+function [kon_grid, koff_grid, smax_grid] = create_ground_truth_heterogeneity(nx, ny, nz, ads_x_range, ads_y_range, ads_layer)
+    kon_base = 9.4e3;
+    koff_base = 0.0078;
+    smax_total = 1.0;
+    num_ads_cells = (ads_x_range(2)-ads_x_range(1)+1) * (ads_y_range(2)-ads_y_range(1)+1);
+    
+    kon_grid = zeros(nx, ny, nz);
+    koff_grid = zeros(nx, ny, nz);
+    smax_grid = zeros(nx, ny, nz);
+    
+    rng(42);
+    kon_vals = kon_base * (1 + 0.05*randn(ads_x_range(2)-ads_x_range(1)+1, ads_y_range(2)-ads_y_range(1)+1));
+    koff_vals = koff_base * (1 + 0.05*randn(size(kon_vals)));
+    smax_vals = (smax_total/num_ads_cells) * (1 + 0.05*randn(size(kon_vals)));
+    
+    kon_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = kon_vals;
+    koff_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = koff_vals;
+    smax_grid(ads_x_range(1):ads_x_range(2), ads_y_range(1):ads_y_range(2), ads_layer) = smax_vals;
+end
+
+function [t_all, c_s, s] = simulate_3d_flow_model_with_pulses(...
+    nx, ny, nz, kon_grid, koff_grid, smax_grid, velocity_profile, t_breaks, concentrations, D_coeff, ru_to_m, s0_grid)
+    
+    % Initialize state variables
+    num_cells = nx * ny * nz;
+    c_s0 = zeros(nx, ny, nz);
+    c_s0(1, :, :) = concentrations(1); % Initial concentration
+    s0 = s0_grid;
+    %Q0 = zeros(nx, ny, nz);
+    %R0 = zeros(nx, ny, nz);
+    y0 = [c_s0(:); s0(:)]; %Q0(:); R0(:)];
+    
+    % Setup ODE options
+    options = odeset('RelTol', 1e-5, 'AbsTol', 1e-6);
+    
+    % --- START: PREALLOCATION LOGIC ---
+    
+    % 1. Calculate the total number of points for preallocation
+    num_segments = length(t_breaks) - 1;
+    num_points_per_segment = 1000;
+    % Total points = points from segment 1 + points from all other segments (excluding duplicates)
+    total_points = num_points_per_segment + (num_segments - 1) * (num_points_per_segment - 1);
+    
+    % 2. Preallocate results arrays using zeros()
+    t_all = zeros(total_points, 1);
+    y_all = zeros(total_points, length(y0));
+    
+    % 3. Initialize an index to keep track of where to insert data
+    last_idx = 0;
+    
+    % --- END: PREALLOCATION LOGIC ---
+    
+    % Process each time segment
+    for seg = 1:num_segments
+        t_start = t_breaks(seg);
+        t_end = t_breaks(seg+1);
+        c0_seg = concentrations(seg);
+        
+        % Determine time points for segment
+        tspan = linspace(t_start, t_end, num_points_per_segment);
+        
+        % Run simulation for segment
+        [t_seg, y_seg] = ode15s(@(t,y) ode_system(t, y, nx, ny, nz, velocity_profile, ...
+            kon_grid, koff_grid, smax_grid, c0_seg, D_coeff, ru_to_m), tspan, y0, options);
+        
+        % --- START: MODIFIED RESULT HANDLING ---
+        
+        if seg == 1
+            % For the first segment, add all points
+            num_to_add = num_points_per_segment;
+            current_indices = (last_idx + 1):(last_idx + num_to_add);
+            t_all(current_indices) = t_seg;
+            y_all(current_indices, :) = y_seg;
+            last_idx = last_idx + num_to_add;
+        else
+            % For subsequent segments, skip the first point to avoid duplicates
+            num_to_add = num_points_per_segment - 1;
+            current_indices = (last_idx + 1):(last_idx + num_to_add);
+            t_all(current_indices) = t_seg(2:end);
+            y_all(current_indices, :) = y_seg(2:end, :);
+            last_idx = last_idx + num_to_add;
+        end
+
+        % --- END: MODIFIED RESULT HANDLING ---
+        
+        % Update initial condition for next segment
+        if seg < num_segments
+            y0 = y_seg(end, :)';
+            c_s_end = reshape(y0(1:num_cells), [nx, ny, nz]);
+            s_end = reshape(y0(num_cells+1:2*num_cells), [nx, ny, nz]);
+            c_s_end(1, :, :) = concentrations(seg+1);
+            y0 = [c_s_end(:); s_end(:); y0(2*num_cells+1:end)]; 
+        end
+    end
+    
+    % Extract variables
+    c_s = reshape(y_all(:, 1:num_cells), [length(t_all), nx, ny, nz]);
+    s = reshape(y_all(:, num_cells+1:2*num_cells), [length(t_all), nx, ny, nz]);
+    %Q = reshape(y_all(:, 2*num_cells+1:3*num_cells), [length(t_all), nx, ny, nz]);
+    %R = reshape(y_all(:, 3*num_cells+1:end), [length(t_all), nx, ny, nz]);
+    
+    % Compute kernel
+    %K = exp(-Q) .* R;
+end
+
+function dydt = ode_system(~, y, nx, ny, nz, velocity_profile, kon_grid, koff_grid, smax_grid, c0, D_coeff, ru_to_m)
+    num_cells = nx * ny * nz;
+    c_s = reshape(y(1:num_cells), [nx, ny, nz]);
+    s = reshape(y(num_cells + 1:2*num_cells), [nx, ny, nz]);
+    %Q = reshape(y(2*num_cells + 1:3*num_cells), [nx, ny, nz]);
+    %R = reshape(y(3*num_cells + 1:4*num_cells), [nx, ny, nz]);
+    %dcsdt = zeros(nx, ny, nz);
+    %dsdt = zeros(nx, ny, nz);
+
+    % Inlet boundary condition (x=1)
+    c_s(1,:,:) = c0;
+    dcsdt(1,:,:) = 0;
+
+    % Diffusion terms
+    d2c_dx2 = zeros(nx, ny, nz);
+    d2c_dx2(2:end-1,:,:) = (c_s(3:end,:,:) - 2*c_s(2:end-1,:,:) + c_s(1:end-2,:,:));
+    
+    d2c_dz2 = zeros(nx, ny, nz);
+    d2c_dz2(:,:,2:end-1) = c_s(:,:,3:end) - 2*c_s(:,:,2:end-1) + c_s(:,:,1:end-2);
+    d2c_dz2(:,:,1) = c_s(:,:,2) - 2*c_s(:,:,1) + c_s(:,:,1);
+    d2c_dz2(:,:,end) = c_s(:,:,end-1) - 2*c_s(:,:,end) + c_s(:,:,end-1);
+    
+    dcsdt = D_coeff * (d2c_dx2 + d2c_dz2);
+    
+    % Advection
+    dcsdt(2:end,:,:) = dcsdt(2:end,:,:) + ...
+        bsxfun(@times, velocity_profile, (c_s(1:end-1,:,:) - c_s(2:end,:,:)));
+    
+    % Adsorption kinetics
+    available_sites = max(smax_grid - s, 0);
+    dsdt = kon_grid .* c_s .* available_sites - koff_grid .* s;
+    dcsdt = dcsdt - (dsdt * ru_to_m);
+    
+    % Compute dQ/dt and dR/dt
+    %dQdt = kon_grid .* c_s + koff_grid;
+    %dRdt = c_s .* exp(Q);
+
+    % Combine all derivatives
+    %dydt = [dcsdt(:); dsdt(:); dQdt(:); dRdt(:)];
+    dydt = [dcsdt(:); dsdt(:)];
+end
+% --- NEW FUNCTION ---
+function stop = optimPlotter_1D(log_params, optimValues, state, ...
+                               true_params_1D, exp_data, exp_settings, model_config, ads_y_dim)
+% optimPlotter_1D visualizes the optimization progress for the 1D heterogeneous model.
+
+    stop = false; % This function does not stop the optimization by default
+    
+    % Use persistent variables to store plot handles
+    persistent handles; 
+    
+    switch state
+        case 'init'
+            % On the first call, create the figure and axes
+            fig = figure('Name', '1D Optimization Progress', 'Position', [100, 100, 1600, 700]);
+            
+            % --- Setup Axes ---
+            ax_kon = subplot(2, 3, 1);
+            ax_koff = subplot(2, 3, 2);
+            ax_smax = subplot(2, 3, 3);
+            
+            % We will plot the fit for the first experiment
+            ax_sig1 = subplot(2, 3, 4);
+            ax_sig2 = subplot(2, 3, 5);
+            ax_sig3 = subplot(2, 3, 6);
+            
+            % --- Store handles and static data ---
+            handles.fig = fig;
+            handles.ax_kon = ax_kon; handles.ax_koff = ax_koff; handles.ax_smax = ax_smax;
+            handles.ax_sigs = [ax_sig1, ax_sig2, ax_sig3];
+            
+            handles.true_params_1D = true_params_1D;
+            handles.exp_data = exp_data;
+            handles.exp_settings = exp_settings;
+            handles.model_config = model_config;
+            handles.ads_y_dim = ads_y_dim;
+            
+            % Initial plot to set up the view
+            updatePlots(log_params, optimValues, handles);
+
+        case 'iter'
+            % On each subsequent iteration, update the plots if the figure is still open
+            if ishandle(handles.fig)
+                updatePlots(log_params, optimValues, handles);
+            else
+                stop = true;
+                fprintf('Animation figure closed. Stopping optimization.\n');
+            end
+            
+        case 'done'
+            if ishandle(handles.fig)
+                sgtitle(handles.fig, 'Optimization Finished!', 'FontSize', 14, 'FontWeight', 'bold');
+            end
+    end
+end
+
+function updatePlots(current_log_params, optimVals, h)
+% Updates plots during optimization, using interpolation to prevent size mismatch errors.
+
+    % --- Update Parameter Plots (this part is unchanged) ---
+    current_params_linear = 10.^current_log_params;
+    ads_y_dim = h.ads_y_dim;
+    % ... (the code for splitting and plotting the parameters kon, koff, smax remains the same) ...
+    true_kon = h.true_params_1D(1:ads_y_dim);
+    true_koff = h.true_params_1D(ads_y_dim+1 : 2*ads_y_dim);
+    true_smax = h.true_params_1D(2*ads_y_dim+1 : end);
+    opt_kon = current_params_linear(1:ads_y_dim);
+    opt_koff = current_params_linear(ads_y_dim+1 : 2*ads_y_dim);
+    opt_smax = current_params_linear(2*ads_y_dim+1 : end);
+    cla(h.ax_kon); hold(h.ax_kon, 'on');
+    plot(h.ax_kon, true_kon, 'ro-', 'LineWidth', 2, 'DisplayName', 'True');
+    plot(h.ax_kon, opt_kon, 'g*-', 'LineWidth', 1.5, 'DisplayName', 'Current');
+    title(h.ax_kon, sprintf('k_{on} (Iter: %d)', optimVals.iteration));
+    legend(h.ax_kon, 'Location', 'best'); grid(h.ax_kon, 'on'); xlabel(h.ax_kon, 'Line Index');
+    cla(h.ax_koff); hold(h.ax_koff, 'on');
+    plot(h.ax_koff, true_koff, 'ro-', 'LineWidth', 2);
+    plot(h.ax_koff, opt_koff, 'g*-', 'LineWidth', 1.5);
+    title(h.ax_koff, sprintf('k_{off} (F-count: %d)', optimVals.funccount));
+    grid(h.ax_koff, 'on'); xlabel(h.ax_koff, 'Line Index');
+    cla(h.ax_smax); hold(h.ax_smax, 'on');
+    plot(h.ax_smax, true_smax, 'ro-', 'LineWidth', 2);
+    plot(h.ax_smax, opt_smax, 'g*-', 'LineWidth', 1.5);
+    title(h.ax_smax, sprintf('s_{max} (Residual: %.2e)', optimVals.resnorm));
+    grid(h.ax_smax, 'on'); xlabel(h.ax_smax, 'Line Index');
+    
+    % --- MODIFIED: Update Sensorgram Plots with Interpolation ---
+    %setting = h.exp_settings(1);
+    
+    % Unpack the experimental data struct
+    data_struct = h.exp_data{1};
+    t_exp = data_struct.time;          % The fixed, "master" time vector
+    exp_data_matrix = data_struct.signals;
+
+    % Simulate with current parameters to get the new data and its time vector
+%     [t_sim, s_sim_matrix] = run_single_experiment_1D_model(current_params_linear, setting, h.model_config);
+    % The residual is for ALL experiments, so extract the part for the first one.
+    num_points_exp1 = numel(exp_data_matrix);
+    residual_exp1 = optimVals.residual(1:num_points_exp1);
+    
+    % Reconstruct the simulated signal from the residual. It's much faster!
+    s_sim_matrix = exp_data_matrix + reshape(residual_exp1, size(exp_data_matrix));
+
+    % Use interpolation to resample the simulated data onto the experimental time grid
+    %s_sim_interp = interp1(t_sim, s_sim_matrix, t_exp, 'linear', 'extrap');
+    
+    % Plot a few sample lines using the common time vector 't_exp'
+    lines_to_plot = unique([1, round(ads_y_dim/2), ads_y_dim]);
+    for i = 1:length(lines_to_plot)
+        line_idx = lines_to_plot(i);
+        ax = h.ax_sigs(i);
+        
+        cla(ax); hold(ax, 'on');
+        % Now, both vectors will have the same length (length(t_exp))
+        plot(ax, t_exp, exp_data_matrix(:, line_idx), 'b-', 'LineWidth', 2, 'DisplayName', 'Data');
+        plot(ax, t_exp, s_sim_matrix(:, line_idx), 'r--', 'LineWidth', 1.5, 'DisplayName', 'Fit');
+        title(ax, sprintf('Sensorgram Fit for Line %d', line_idx));
+        legend(ax, 'Location', 'best'); xlabel(ax, 'Time (s)'); ylabel(ax, 's_{obs,j}(t)');
+        grid(ax, 'on');
+    end
+    drawnow; % Force the figure window to update
+end
