@@ -9,7 +9,7 @@ end
 
 %% --- STEP 0.1: Parameters Definition ---
 % ========================================================================
-generate_video_frames = false; % Mude para 'false' para pular a criação do vídeo e acelerar o script
+generate_video_frames = true; % Mude para 'false' para pular a criação do vídeo e acelerar o script
 gridN_x = 22; gridN_y = 5; gridN_z = 3;ads_layer = 1;
 ads_x_range = [5,15]; ads_y_range = [1,5];
 % Get number of lines in adsorption region
@@ -370,7 +370,7 @@ n0 = sqrt(2.3104);         % Optical substrate (Prism)
 n1 = sqrt(-14.379 + 1.0084j); % Gold film (complex RI)
 n_bulk = sqrt(1.7876);         % Flow cell solution (baseline buffer)
 % Define the angular range for SPR curve calculation
-angle_range = linspace(65, 80, 1024); % [start_angle, end_angle, num_points]
+angle_range = linspace(65, 80, 1280); % [start_angle, end_angle, num_points]
 % Define the conversion factor from Response Units (RU) to Refractive Index Units (RIU)
 % 1000 RU = 0.001 RIU change
 RU_TO_RIU = 0.001 / 1000;
@@ -521,8 +521,8 @@ if generate_video_frames
     video_filename = 'Adsorption/LineAverageModel/Videos/spri_simulation_final.avi';
     outputVideo = VideoWriter(video_filename, 'Motion JPEG AVI');
     
-    outputVideo.FrameRate = 30;
-    outputVideo.Quality = 95; % Quality for AVI is 0-100
+    outputVideo.FrameRate = 0.5;
+    outputVideo.Quality = 100; % Quality for AVI is 0-100
     open(outputVideo);
     % --- Pega e ordena a lista de todos os arquivos de imagem ---
     image_files_struct = dir(fullfile(video_frames_folder, '*.png'));

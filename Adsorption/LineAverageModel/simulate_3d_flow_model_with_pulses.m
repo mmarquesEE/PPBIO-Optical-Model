@@ -17,7 +17,7 @@ function [t_all, c_s, s] = simulate_3d_flow_model_with_pulses(...
     
     % 1. Calculate the total number of points for preallocation
     num_segments = length(t_breaks) - 1;
-    num_points_per_segment = 1000;
+    num_points_per_segment = 1100;
     % Total points = points from segment 1 + points from all other segments (excluding duplicates)
     total_points = num_points_per_segment + (num_segments - 1) * (num_points_per_segment - 1);
     
