@@ -370,7 +370,7 @@ n0 = sqrt(2.3104);         % Optical substrate (Prism)
 n1 = sqrt(-14.379 + 1.0084j); % Gold film (complex RI)
 n_bulk = sqrt(1.7876);         % Flow cell solution (baseline buffer)
 % Define the angular range for SPR curve calculation
-angle_range = linspace(65, 80, 1000); % [start_angle, end_angle, num_points]
+angle_range = linspace(65, 80, 1024); % [start_angle, end_angle, num_points]
 % Define the conversion factor from Response Units (RU) to Refractive Index Units (RIU)
 % 1000 RU = 0.001 RIU change
 RU_TO_RIU = 0.001 / 1000;
