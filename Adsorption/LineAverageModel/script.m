@@ -9,8 +9,8 @@ end
 
 %% --- STEP 0.1: Parameters Definition ---
 % ========================================================================
-generate_video_frames = true; % Mude para 'false' para pular a criação do vídeo e acelerar o script
-gridN_x = 22; gridN_y = 5; gridN_z = 3;ads_layer = 1;
+generate_video_frames = false; % Mude para 'false' para pular a criação do vídeo e acelerar o script
+gridN_x = 22; gridN_y = 5; gridN_z = 15;ads_layer = 1;
 ads_x_range = [5,15]; ads_y_range = [1,5];
 % Get number of lines in adsorption region
 ads_y_dim = ads_y_range(2) - ads_y_range(1) + 1;
@@ -107,7 +107,7 @@ set([ax1, ax2, ax3], 'FontSize', base_font_size - 1);
 
 % --- SAVE THE ENTIRE FIGURE ---
 % Use the helper function to set the final size to 8.4cm and save
-save_pub_fig(fig1, 'Adsorption/LineAverageModel/Figures/figure_1_surf_params_2D_combined', target_fig_width_cm);
+% save_pub_fig(fig1, 'Adsorption/LineAverageModel/Figures/figure_1_surf_params_2D_combined', target_fig_width_cm);
 close(fig1); % Close figure after saving
 
 % --- SAVE EACH SUBPLOT INDIVIDUALLY ---
@@ -510,7 +510,7 @@ text_str = sprintf('\\Delta\\theta_{SPR} = %.3f°', angle_shift);
 text(ax_main, xlims(1) + 0.05*diff(xlims), ylims(1) + 0.9*diff(ylims), text_str, 'FontSize', base_font_size - 1, 'EdgeColor', 'black', 'BackgroundColor', 'white', 'VerticalAlignment', 'top');
 
 % --- SAVE THE FINAL FIGURE ---
-save_pub_fig(fig3_pub, 'Adsorption/LineAverageModel/Figures/figure_spr_shift_composite_pub', target_fig_width_cm);
+% save_pub_fig(fig3_pub, 'Adsorption/LineAverageModel/Figures/figure_spr_shift_composite_pub', target_fig_width_cm);
 close(fig3_pub);
 %% --- STEP 5: VIDEO CREATION ---
 % =========================================================================
@@ -634,7 +634,7 @@ lgd.Box = 'off';
 
 %title(t, 'Final Validation: Physically Correct Sensorgram', 'FontSize', base_font_size + 1);
 % --- SAVE THE FINAL FIGURE ---
-save_pub_fig(fig3b_pub, 'Adsorption/LineAverageModel/Figures/figure_angle_vs_ru_pub', target_fig_width_cm);
+% save_pub_fig(fig3b_pub, 'Adsorption/LineAverageModel/Figures/figure_angle_vs_ru_pub', target_fig_width_cm);
 close(fig3b_pub);
 %% 
 fprintf('Generating publication-ready final sensorgram plot...\n');
@@ -684,7 +684,7 @@ set(ax2, 'FontSize', base_font_size - 1);
 title(t, 'Sensorgrams from Analytical Formula', 'FontSize', base_font_size + 1);
 
 % --- SAVE THE FINAL FIGURE ---
-save_pub_fig(fig_formula_pub, 'Adsorption/LineAverageModel/Figures/figure_final_sensorgrams_formula_pub', target_fig_width_cm);
+% save_pub_fig(fig_formula_pub, 'Adsorption/LineAverageModel/Figures/figure_final_sensorgrams_formula_pub', target_fig_width_cm);
 close(fig_formula_pub);
 
 fprintf('Generating publication-ready absolute RI sensorgram plot...\n');
@@ -735,7 +735,7 @@ set(ax2, 'FontSize', base_font_size - 1);
 title(t, 'Sensorgrams as Absolute Effective RI', 'FontSize', base_font_size + 1);
 
 % --- SAVE THE FINAL FIGURE ---
-save_pub_fig(fig_abs_ri_pub, 'Adsorption/LineAverageModel/Figures/figure_absolute_ri_sensorgrams_pub', target_fig_width_cm);
+% save_pub_fig(fig_abs_ri_pub, 'Adsorption/LineAverageModel/Figures/figure_absolute_ri_sensorgrams_pub', target_fig_width_cm);
 close(fig_abs_ri_pub);
 % =========================================================================
 %% --- STEP 7: INVERSE PROCESS (Corrected with Single Legend)---
@@ -792,7 +792,7 @@ lgd.Layout.Tile = 'east'; % Move the legend to its own space outside the plots
 
 % title(t_a, 'Validation in Resonance Angle Space', 'FontSize', base_font_size + 1);
 xlabel(t_a, 'Time (s)', 'FontSize', base_font_size);
-save_pub_fig(fig4a_pub, 'Adsorption/LineAverageModel/Figures/figure_4a_validation_angle_pub', target_fig_width_cm);
+% save_pub_fig(fig4a_pub, 'Adsorption/LineAverageModel/Figures/figure_4a_validation_angle_pub', target_fig_width_cm);
 close(fig4a_pub);
 
 %% --- Plot B: Validation in Refractive Index units (Corrected) ---
@@ -827,7 +827,7 @@ lgd.Layout.Tile = 'east';
 
 % title(t_b, 'Validation in Refractive Index Space', 'FontSize', base_font_size + 1);
 xlabel(t_b, 'Time (s)', 'FontSize', base_font_size);
-save_pub_fig(fig4b_pub, 'Adsorption/LineAverageModel/Figures/figure_4b_validation_ri_pub', target_fig_width_cm);
+% save_pub_fig(fig4b_pub, 'Adsorption/LineAverageModel/Figures/figure_4b_validation_ri_pub', target_fig_width_cm);
 close(fig4b_pub);
 
 %% --- Plot C: Validation in Response Units (Corrected) ---
@@ -862,7 +862,7 @@ lgd.Layout.Tile = 'east';
 
 % title(t_c, 'Final Round-Trip Validation in Response Units', 'FontSize', base_font_size + 1);
 xlabel(t_c, 'Time (s)', 'FontSize', base_font_size);
-save_pub_fig(fig4c_pub, 'Adsorption/LineAverageModel/Figures/figure_4c_validation_ru_pub', target_fig_width_cm);
+% save_pub_fig(fig4c_pub, 'Adsorption/LineAverageModel/Figures/figure_4c_validation_ru_pub', target_fig_width_cm);
 close(fig4c_pub);
 
 
@@ -962,7 +962,7 @@ xlabel(t, 'Time (s)', 'FontSize', base_font_size + 1);
 % title(t, 'Comprehensive Round-Trip Validation', 'FontSize', base_font_size + 2, 'FontWeight', 'bold');
 
 % --- Save the Final Composite Figure ---
-save_pub_fig(fig_summary, 'Adsorption/LineAverageModel/Figures/figure_VALIDATION_summary_composite', target_fig_width_cm);
+% save_pub_fig(fig_summary, 'Adsorption/LineAverageModel/Figures/figure_VALIDATION_summary_composite', target_fig_width_cm);
 close(fig_summary);
 % =========================================================================
 % --- FINAL PUBLICATION PLOT: ANNOTATED SENSORGRAM FIT ---
@@ -1033,7 +1033,7 @@ legend(ax, 'Location', 'southeast', 'FontSize', base_font_size - 1);
 set(ax, 'FontSize', base_font_size - 1);
 
 % --- SAVE THE FINAL FIGURE ---
-save_pub_fig(fig_annotated_pub, 'Adsorption/LineAverageModel/Figures/figure_6_annotated_fit_pub', target_fig_width_cm);
+% save_pub_fig(fig_annotated_pub, 'Adsorption/LineAverageModel/Figures/figure_6_annotated_fit_pub', target_fig_width_cm);
 close(fig_annotated_pub);
 
 
