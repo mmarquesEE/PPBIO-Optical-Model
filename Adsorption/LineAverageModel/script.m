@@ -10,7 +10,7 @@ end
 %% --- STEP 0.1: Parameters Definition ---
 % ========================================================================
 generate_video_frames = false; % Mude para 'false' para pular a criação do vídeo e acelerar o script
-gridN_x = 22; gridN_y = 5; gridN_z = 15;ads_layer = 1;
+gridN_x = 22; gridN_y = 5; gridN_z = 3;ads_layer = 1;
 ads_x_range = [5,15]; ads_y_range = [1,5];
 % Get number of lines in adsorption region
 ads_y_dim = ads_y_range(2) - ads_y_range(1) + 1;
@@ -107,7 +107,7 @@ set([ax1, ax2, ax3], 'FontSize', base_font_size - 1);
 
 % --- SAVE THE ENTIRE FIGURE ---
 % Use the helper function to set the final size to 8.4cm and save
-% save_pub_fig(fig1, 'Adsorption/LineAverageModel/Figures/figure_1_surf_params_2D_combined', target_fig_width_cm);
+save_pub_fig(fig1, 'Adsorption/LineAverageModel/Figures/figure_1_surf_params_2D_combined', target_fig_width_cm);
 close(fig1); % Close figure after saving
 
 % --- SAVE EACH SUBPLOT INDIVIDUALLY ---
@@ -169,8 +169,8 @@ for exp_idx = 1:n_exp
     sgtitle(sprintf('Experiment %d: Ground Truth Data (RU)', exp_idx));
     
     % --- SAVE FIGURE ---
-    print(fig2, sprintf('Adsorption/LineAverageModel/Figures/figure_2_ru_sensorgrams_exp%d.png', exp_idx), '-dpng', '-r300');
-    print(fig2, sprintf('Adsorption/LineAverageModel/Figures/EPS/figure_2_ru_sensorgrams_exp%d.eps', exp_idx), '-depsc');
+%     print(fig2, sprintf('Adsorption/LineAverageModel/Figures/figure_2_ru_sensorgrams_exp%d.png', exp_idx), '-dpng', '-r300');
+%     print(fig2, sprintf('Adsorption/LineAverageModel/Figures/EPS/figure_2_ru_sensorgrams_exp%d.eps', exp_idx), '-depsc');
     % 1. Calculate total rows by summing up data points from all experiments
     total_rows = total_rows + numel(exp_data{exp_idx}.signals_clean);
 end
@@ -243,23 +243,23 @@ fprintf('Now performing SVD analysis to investigate practical identifiability...
 % Extract the diagonal singular values
 singular_values = diag(S);
 % --- Step 2: Analyze and Plot Singular Values ---
-svg_fig = figure('Name', 'SVD Analysis of Jacobian', 'Position', [100, 100, 1400, 600]);
+svg_fig = figure('Name', 'SVD Analysis of Jacobian', 'Units', 'centimeters');
 subplot(1, 2, 1);
-semilogy(singular_values, 'o-', 'LineWidth', 2, 'MarkerSize', 8);
+semilogy(singular_values, 'o-', 'LineWidth', 2, 'MarkerSize', 7);
 grid on;
-title('Singular Values of the Jacobian');
+title('Singular Values',FontSize=8);
 xlabel('Singular Value Index');
 ylabel('Magnitude (log scale)');
 xlim([0, N_params_1D + 1]);
 % Add text for the condition number
 cond_number = singular_values(1) / singular_values(end);
-legend(sprintf('Condition Number: %.2e', cond_number));
+legend(sprintf('Condition Number: %.2e', cond_number),Fontsize = 5);
 % --- Step 3: Analyze and Plot Parameter Combinations (Right Singular Vectors) ---
 subplot(1, 2, 2);
 imagesc(abs(V)); % Use absolute value for clarity of magnitude
 colorbar;
-title('Parameter Contributions to Singular Vectors (V)');
-xlabel('Singular Vector Index (1=Most Identifiable -> N=Least Identifiable)');
+title('Parameter Contributions to Singular Vectors (V)',FontSize=8);
+xlabel('Singular Vector Index');
 ylabel('Parameter Index');
 % Create meaningful labels for the y-axis
 param_labels = [arrayfun(@(i) sprintf('kon_{%d}', i), 1:ads_y_dim, 'UniformOutput', false), ...
@@ -268,8 +268,9 @@ param_labels = [arrayfun(@(i) sprintf('kon_{%d}', i), 1:ads_y_dim, 'UniformOutpu
 yticks(1:N_params_1D);
 yticklabels(param_labels);
 %sgtitle('SVD-based Identifiability Analysis', 'FontSize', 16, 'FontWeight', 'bold');
-print(svg_fig, 'Adsorption/LineAverageModel/Figures/figure_svd_analysis.png', '-dpng', '-r300');
-print(svg_fig, 'Adsorption/LineAverageModel/Figures/EPS/figure_svd_analysis.eps', '-depsc');
+target_fig_width_cm = 14;
+save_pub_fig(svg_fig, 'Adsorption/LineAverageModel/Figures/figure_svd_analysis', target_fig_width_cm);
+close(svg_fig); % Close figure after saving
 % ================= END OF SVD ANALYSIS =================
 %% --- STEP 3: PARAMETER IDENTIFICATION (1D HETEROGENEITY) ---   
 fprintf('\nStarting 1D Parameter Identification...\n');

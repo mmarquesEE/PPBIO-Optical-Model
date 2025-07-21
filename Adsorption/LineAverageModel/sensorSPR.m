@@ -57,7 +57,7 @@ d2 = 1000;        % Analyte layer thickness (nm), kept large as in your example
 n0 = sqrt(2.3104);         % Layer 0: Optical substrate (Prism)
 n1 = sqrt(-14.379 + 1.0084j); % Layer 1: Gold film (complex RI)
 n_bulk = sqrt(1.7876);     % Layer 3: Flow cell solution (baseline buffer)
-angle_range = linspace(65, 80, 1080); % Angular range for SPR curve
+angle_range = linspace(65, 80, 1280); % Angular range for SPR curve
 RU_TO_RIU = 0.001 / 1000; % Conversion factor
 
 %% --- STEP 4: Call the SPR Animation Function ---
